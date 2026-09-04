@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -39,6 +39,7 @@ jobs:
         run: ./build/vol_target_demo
       - name: Run example (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: .\build\Release\vol_target_demo.exe
 
   sanitize:
@@ -54,6 +55,8 @@ jobs:
         run: cmake --build build
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Run example under sanitizers
+        run: ./build/vol_target_demo
 
   install-consume:
     runs-on: ubuntu-latest
@@ -91,9 +94,24 @@ jobs:
         run: |
           export PKG_CONFIG_PATH="$PWD/prefix/lib/pkgconfig"
           pkg-config --modversion mlrisk
-          cc -std=c11 consumer/main.c $(pkg-config --cflags --libs mlrisk) -o consumer_pc
+          read -ra FLAGS <<< "$(pkg-config --cflags --libs mlrisk)"
+          cc -std=c11 consumer/main.c "${FLAGS[@]}" -o consumer_pc
           ./consumer_pc
       - name: Public headers compile as C++
         run: |
           echo '#include "mlrisk/mlrisk.h"' > headers.cpp
           c++ -std=c++17 -Wall -Wextra -Werror -fsyntax-only -I prefix/include headers.cpp
+
+  reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install reference packages
+        run: pip install -r tests/reference/requirements.txt
+      - name: Build the example
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMLRISK_BUILD_TESTS=OFF && cmake --build build
+      - name: Check the C library against independent references
+        run: MLRISK_DEMO=build/vol_target_demo python tests/reference/reference_check.py

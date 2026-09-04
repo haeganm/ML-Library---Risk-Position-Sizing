@@ -3,10 +3,10 @@
 Regenerates the constants used by ``test_garch_fit_matches_arch`` in
 ``tests/test_vol.c``. The simulated series is produced here with the same
 64-bit LCG + Box-Muller generator as ``tests/test_util.h``, so the two sides
-fit the identical sample (to the last bit when the C build uses
-``-ffp-contract=off``, as the CMake build does); ``arch`` is given the
-identical variance backcast (mean of squared returns) so the two
-log-likelihoods are the same function.
+fit the same sample up to libm rounding of ``log`` and ``cos`` (a few ulps,
+absorbed by the C test tolerances); ``arch`` is given the identical variance
+backcast (mean of squared returns) so the two log-likelihoods are the same
+function.
 
 Returns are passed to ``arch`` scaled by 100: on raw daily-sized returns its
 SLSQP optimizer stalls at the starting values (a documented limitation, hence
@@ -86,6 +86,6 @@ if __name__ == "__main__":
         ll = loglik(r, om, al, be, backcast)
         arch_ll = res.loglikelihood + 0.5 * n * math.log(2 * math.pi) + n * math.log(SCALE)
         assert abs(ll - arch_ll) < 1e-6, (ll, arch_ll)
-        print(f"// {name}: seed={seed} omega={omega:g} alpha={alpha:g} beta={beta:g} n={n}")
-        print(f"//   arch {__import__('arch').__version__}, convergence_flag={res.convergence_flag}")
-        print(f"{{{om:.12e}, {al:.12f}, {be:.12f}, {ll:.6f}}},")
+        print(f"// {name}, arch {__import__('arch').__version__}, convergence_flag={res.convergence_flag}")
+        print(f"{{{seed}, {omega:g}, {alpha:g}, {beta:g}, {n},")
+        print(f" {om:.12e}, {al:.12f}, {be:.12f}, {ll:.6f}}},")

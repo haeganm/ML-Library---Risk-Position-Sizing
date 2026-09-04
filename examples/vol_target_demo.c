@@ -15,6 +15,8 @@
 
 enum { N = 1500, TRAIN = 500, TEST = 250 };
 
+// Same generator as tests/test_util.h, kept local so the example depends on
+// nothing but the public headers
 static double lcg_u01(unsigned long long *state) {
     *state = *state * 6364136223846793005ULL + 1442695040888963407ULL;
     return ((double)(*state >> 11) + 0.5) / 9007199254740992.0;
@@ -59,7 +61,10 @@ int main(int argc, char **argv) {
     simulate(seed, returns, prices, N);
 
     size_t count;
-    mlr_walk_forward_splits(N, TRAIN, TEST, TEST, 0, 0, 0, NULL, 0, &count);
+    if (mlr_walk_forward_splits(N, TRAIN, TEST, TEST, 0, 0, 0, NULL, 0, &count) != MLR_OK || count == 0) {
+        fprintf(stderr, "no walk-forward splits fit in %d samples\n", N);
+        return 1;
+    }
     mlr_split *splits = malloc(count * sizeof *splits);
     if (splits == NULL || mlr_walk_forward_splits(N, TRAIN, TEST, TEST, 0, 0, 0, splits, count, &count) != MLR_OK) {
         fprintf(stderr, "split generation failed\n");

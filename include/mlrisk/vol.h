@@ -37,7 +37,7 @@ extern "C" {
 typedef struct {
     double omega;        /**< Constant term (finite, > 0) */
     double alpha;        /**< ARCH coefficient (>= 0) */
-    double beta;         /**< GARCH coefficient (>= 0, alpha + beta < 1) */
+    double beta;         /**< GARCH coefficient (>= 0, alpha + beta < 0.9999) */
     double sigma2_next;  /**< One-step-ahead conditional variance after the fit sample */
     double loglik;       /**< Maximized Gaussian log-likelihood (constants dropped) */
     int converged;       /**< 1 if the optimizer met its tolerances, 0 = iteration cap.
@@ -52,7 +52,8 @@ typedef struct {
  *
  * A coarse feasible grid seeds a Nelder-Mead refinement. Non-convergence is
  * not an error: the best point found is returned with converged == 0.
- * Estimates are invariant to the scale of the returns.
+ * alpha and beta are invariant to the scale of the returns; omega scales
+ * with their variance.
  *
  * Three parameters need a few hundred observations to be identified; with
  * short samples the optimizer converges to whatever the flat likelihood
@@ -62,7 +63,7 @@ typedef struct {
  * @param n Number of returns (must be >= 100)
  * @param model_out Fitted model
  * @return MLR_OK on success, MLR_EINVAL on invalid input, MLR_EDOMAIN if the
- *         returns have zero or non-finite variance
+ *         returns have zero, non-finite, or denormally small variance
  */
 mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out);
 
@@ -87,7 +88,8 @@ mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out);
  * @param n Number of returns
  * @param sigma_out Output per-period sigma (length n, pre-allocated)
  * @return MLR_OK on success, MLR_EINVAL on invalid input or parameters
- *         (including a negative or non-finite backcast)
+ *         (omega must be finite and > 0, alpha and beta >= 0 with
+ *         alpha + beta < 0.9999, backcast finite and >= 0)
  */
 mlr_status mlr_garch_filter(const mlr_garch *model, const double *returns, size_t n,
                             double *sigma_out);
@@ -127,9 +129,10 @@ mlr_status mlr_parkinson_vol(const double *high, const double *low, size_t n, do
  *
  * sigma2[i] = 0.5 * ln(high/low)^2 - (2 ln 2 - 1) * ln(close/open)^2
  *
- * Bad bars (non-finite, <= 0, high < low, or a ratio that overflows) produce
- * out[i] = MLR_NAN, as do bars where the estimator goes negative (a known
- * Garman-Klass artifact); the call still returns MLR_OK.
+ * Bad bars (non-finite, <= 0, high < low, open or close outside [low, high],
+ * or a ratio that overflows) produce out[i] = MLR_NAN; the call still returns
+ * MLR_OK. On a consistent bar |ln(close/open)| <= ln(high/low), so the
+ * estimator is never negative.
  *
  * @param open Open prices (length n)
  * @param high High prices (length n)

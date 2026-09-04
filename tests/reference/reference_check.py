@@ -1,0 +1,532 @@
+#!/usr/bin/env python3
+"""Independent reference checks for mlrisk.
+
+Compiles ``src/*.c`` into a shared library and calls the real C through
+ctypes, then compares every public function against an implementation it
+did not write: pandas, numpy, scipy, scikit-learn, and the ``arch`` package.
+Each check prints its measured error; any check outside tolerance fails the
+run.
+
+    pip install -r tests/reference/requirements.txt
+    python tests/reference/reference_check.py
+
+Set ``MLRISK_DEMO`` to the built ``vol_target_demo`` binary to also
+reconcile the example's printed fold PnL against a recomputation from raw
+arrays.
+"""
+
+from __future__ import annotations
+
+import ctypes as C
+import math
+import os
+import warnings
+from fractions import Fraction
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+import numpy as np
+import pandas as pd
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+FAILURES: list[str] = []
+
+
+# ----------------------------------------------------------------- binding
+class Garch(C.Structure):
+    _fields_ = [("omega", C.c_double), ("alpha", C.c_double), ("beta", C.c_double),
+                ("sigma2_next", C.c_double), ("loglik", C.c_double),
+                ("converged", C.c_int), ("backcast", C.c_double)]
+
+
+class Split(C.Structure):
+    _fields_ = [(f, C.c_size_t) for f in
+                ("train_start", "train_end", "test_start", "test_end",
+                 "train_post_start", "train_post_end")]
+
+
+class LinModel(C.Structure):
+    _fields_ = [("d", C.c_size_t), ("w", C.POINTER(C.c_double)),
+                ("b", C.c_double), ("ridge", C.c_double)]
+
+
+D = C.POINTER(C.c_double)
+OK, EINVAL, ENOMEM, EBOUNDS, EDOMAIN = range(5)
+
+
+def build() -> C.CDLL:
+    tmp = tempfile.mkdtemp(prefix="mlrisk_ref_")
+    lib = os.path.join(tmp, "libmlrisk_ref.so")
+    cc = os.environ.get("CC", "cc")
+    cmd = [cc, "-std=c11", "-O2", "-ffp-contract=off", "-shared", "-fPIC",
+           f"-I{ROOT / 'include'}", *map(str, sorted((ROOT / "src").glob("*.c"))),
+           "-lm", "-o", lib]
+    subprocess.check_call(cmd)
+    L = C.CDLL(lib)
+    sig = {
+        "mlr_rolling_mean": [D, C.c_size_t, C.c_size_t, D],
+        "mlr_rolling_std": [D, C.c_size_t, C.c_size_t, D],
+        "mlr_ewma_vol": [D, C.c_size_t, C.c_double, D],
+        "mlr_garch_fit": [D, C.c_size_t, C.POINTER(Garch)],
+        "mlr_garch_filter": [C.POINTER(Garch), D, C.c_size_t, D],
+        "mlr_garch_forecast": [C.POINTER(Garch), C.c_size_t, D],
+        "mlr_parkinson_vol": [D, D, C.c_size_t, D],
+        "mlr_garman_klass_vol": [D, D, D, D, C.c_size_t, D],
+        "mlr_vol_target_position": [D, C.c_double, C.c_double, D, C.c_double, C.c_size_t, D],
+        "mlr_kelly_fraction": [D, C.c_size_t, C.c_double, D],
+        "mlr_drawdown_scale": [D, C.c_size_t, C.c_double, D],
+        "mlr_walk_forward_splits": [C.c_size_t] * 6 + [C.c_int, C.POINTER(Split), C.c_size_t, C.POINTER(C.c_size_t)],
+        "mlr_lin_model_init": [C.POINTER(LinModel), C.c_size_t],
+        "mlr_lin_model_free": [C.POINTER(LinModel)],
+        "mlr_linreg_fit": [D, D, C.c_size_t, C.c_size_t, C.c_double, C.POINTER(LinModel)],
+        "mlr_linreg_predict": [D, C.c_size_t, C.c_size_t, C.POINTER(LinModel), D],
+    }
+    for name, args in sig.items():
+        f = getattr(L, name)
+        f.argtypes = args
+        f.restype = None if name == "mlr_lin_model_free" else C.c_int
+    return L
+
+
+L = build()
+
+
+def arr(x) -> np.ndarray:
+    return np.ascontiguousarray(np.asarray(x, dtype=np.float64))
+
+
+def ptr(x: np.ndarray):
+    return x.ctypes.data_as(D)
+
+
+def check(name: str, ok: bool, detail: str) -> None:
+    status = "ok  " if ok else "FAIL"
+    print(f"{status} {name}: {detail}")
+    if not ok:
+        FAILURES.append(name)
+
+
+def max_abs(a, b) -> float:
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    both_nan = np.isnan(a) & np.isnan(b)
+    if not np.array_equal(np.isnan(a), np.isnan(b)):
+        return math.inf
+    m = ~both_nan
+    return float(np.max(np.abs(a[m] - b[m]))) if m.any() else 0.0
+
+
+# --------------------------------------------------------------- wrappers
+def rolling_mean(x, w):
+    x = arr(x); out = np.empty_like(x)
+    assert L.mlr_rolling_mean(ptr(x), len(x), w, ptr(out)) == OK
+    return out
+
+
+def rolling_std(x, w):
+    x = arr(x); out = np.empty_like(x)
+    assert L.mlr_rolling_std(ptr(x), len(x), w, ptr(out)) == OK
+    return out
+
+
+def ewma(r, lam):
+    r = arr(r); out = np.empty_like(r)
+    assert L.mlr_ewma_vol(ptr(r), len(r), lam, ptr(out)) == OK
+    return out
+
+
+def garch_fit(r) -> Garch:
+    r = arr(r); m = Garch()
+    st = L.mlr_garch_fit(ptr(r), len(r), C.byref(m))
+    assert st == OK, st
+    return m
+
+
+def garch_filter(m: Garch, r):
+    r = arr(r); out = np.empty_like(r)
+    assert L.mlr_garch_filter(C.byref(m), ptr(r), len(r), ptr(out)) == OK
+    return out
+
+
+def garch_forecast(m: Garch, h):
+    out = np.empty(h)
+    assert L.mlr_garch_forecast(C.byref(m), h, ptr(out)) == OK
+    return out
+
+
+def vol_target(sigma, target, equity, price, lev):
+    sigma, price = arr(sigma), arr(price); out = np.empty_like(sigma)
+    assert L.mlr_vol_target_position(ptr(sigma), target, equity, ptr(price), lev, len(sigma), ptr(out)) == OK
+    return out
+
+
+def splits(n, train, test, step, purge, embargo, post):
+    cnt = C.c_size_t()
+    st = L.mlr_walk_forward_splits(n, train, test, step, purge, embargo, post, None, 0, C.byref(cnt))
+    if st != OK:
+        return st, None
+    buf = (Split * max(cnt.value, 1))()
+    st = L.mlr_walk_forward_splits(n, train, test, step, purge, embargo, post, buf, cnt.value, C.byref(cnt))
+    assert st == OK
+    return OK, [(s.train_start, s.train_end, s.test_start, s.test_end, s.train_post_start, s.train_post_end)
+                for s in buf[:cnt.value]]
+
+
+def ridge_fit(X, y, ridge):
+    X, y = arr(X), arr(y); n, d = X.shape
+    m = LinModel()
+    assert L.mlr_lin_model_init(C.byref(m), d) == OK
+    st = L.mlr_linreg_fit(ptr(X), ptr(y), n, d, ridge, C.byref(m))
+    if st != OK:
+        L.mlr_lin_model_free(C.byref(m))
+        return st, None, None
+    w = np.array([m.w[j] for j in range(d)]); b = m.b
+    L.mlr_lin_model_free(C.byref(m))
+    return OK, w, b
+
+
+# ------------------------------------------------------- 1. rolling stats
+def check_rolling():
+    rng = np.random.default_rng(1)
+    n = 400
+    worst = 0.0
+    for w in (1, 2, 7, 50, n):
+        for level in (0.0, 100.0):
+            x = level + rng.standard_normal(n)
+            x[17] = np.nan; x[200] = np.inf; x[201] = np.nan
+            s = pd.Series(x)
+            ref_mean = s.replace([np.inf, -np.inf], np.nan).rolling(w).mean().to_numpy()
+            ref_std = s.replace([np.inf, -np.inf], np.nan).rolling(w).std(ddof=0).to_numpy()
+            worst = max(worst, max_abs(rolling_mean(x, w), ref_mean), max_abs(rolling_std(x, w), ref_std))
+    check("rolling mean/std vs pandas (windows 1..n, NaN and Inf gaps)", worst < 1e-9, f"max abs err {worst:.2e}")
+
+    # Level 1e9: both pandas' online variance and numpy's two-pass lose about
+    # 1e-11 here (the mean of a hundred 1e9 values rounds at 1e-5), so the
+    # reference is exact rational arithmetic on the input doubles
+    x = 1e9 + rng.standard_normal(n)
+    worst = 0.0; worst_numpy = 0.0
+    for w in (2, 20, 100):
+        ours = rolling_std(x, w)
+        ref = np.full(n, np.nan); ref_np = np.full(n, np.nan)
+        for i in range(w - 1, n):
+            win = [Fraction(v) for v in x[i - w + 1:i + 1]]
+            mean = sum(win) / w
+            ref[i] = math.sqrt(sum((v - mean) ** 2 for v in win) / w)
+            ref_np[i] = np.std(x[i - w + 1:i + 1])
+        worst = max(worst, max_abs(ours, ref)); worst_numpy = max(worst_numpy, max_abs(ref_np, ref))
+    check("rolling std at level 1e9 vs exact rational arithmetic", worst < 1e-12,
+          f"max abs err {worst:.2e} (numpy's own two-pass: {worst_numpy:.2e})")
+
+
+# ------------------------------------------------------------- 2. EWMA
+def check_ewma():
+    rng = np.random.default_rng(2)
+    r = 0.01 * rng.standard_normal(500)
+    worst = 0.0
+    for lam in (0.0, 0.5, 0.94, 0.999):
+        var = pd.Series(r ** 2).ewm(alpha=1 - lam, adjust=False).mean().to_numpy()
+        ref = np.concatenate([[np.nan], np.sqrt(var[:-1])])   # predictive: out[t] uses r[<t]
+        worst = max(worst, max_abs(ewma(r, lam), ref))
+    check("ewma vs pandas ewm(adjust=False), shifted one period", worst < 1e-12, f"max abs err {worst:.2e}")
+
+    # Missing data: independent loop with the documented rule
+    r2 = r.copy(); r2[[0, 1, 50, 51]] = np.nan; r2[300] = 1e200
+    lam = 0.94
+    ref = np.full_like(r2, np.nan); var = None
+    for t, x in enumerate(r2):
+        usable = np.isfinite(x) and np.isfinite(x * x)
+        if var is None:
+            if usable:
+                var = x * x
+            continue
+        ref[t] = math.sqrt(var)
+        if usable:
+            var = lam * var + (1 - lam) * x * x
+    err = max_abs(ewma(r2, lam), ref)
+    check("ewma missing-data rule vs independent loop", err < 1e-15, f"max abs err {err:.2e}")
+
+
+# ------------------------------------------------------- 3. GARCH vs arch
+def check_garch_filter_forecast():
+    from arch.univariate import GARCH, Normal, ZeroMean
+    rng = np.random.default_rng(3)
+    r = 0.01 * rng.standard_normal(600)
+    scale = 100.0
+    am = ZeroMean(r * scale, rescale=False); am.volatility = GARCH(p=1, q=1); am.distribution = Normal()
+    params = np.array([1.5e-6 * scale ** 2, 0.08, 0.9])
+    res = am.fix(params)
+    backcast = am.volatility.backcast(r * scale) / scale ** 2   # arch's default EW backcast
+    m = Garch(omega=1.5e-6, alpha=0.08, beta=0.9, backcast=backcast, converged=1)
+    ours = garch_filter(m, r)
+    ref = res.conditional_volatility / scale
+    err = float(np.max(np.abs(ours / ref - 1)))
+    check("garch filter vs arch conditional volatility (arch backcast)", err < 1e-10, f"max rel err {err:.2e}")
+
+    # Forecast from the end of the sample: seed with our own sigma2_next
+    s2_last = ours[-1] ** 2
+    m.sigma2_next = m.omega + m.alpha * r[-1] ** 2 + m.beta * s2_last
+    h = 20
+    ours_f = garch_forecast(m, h) ** 2
+    ref_f = res.forecast(horizon=h, reindex=False).variance.to_numpy()[-1] / scale ** 2
+    err = float(np.max(np.abs(ours_f / ref_f - 1)))
+    check("garch forecast vs arch forecast (h=1..20)", err < 1e-10, f"max rel err {err:.2e}")
+
+
+def check_garch_fit_montecarlo():
+    from arch.univariate import GARCH, Normal, ZeroMean
+    true = dict(omega=2e-6, alpha=0.10, beta=0.85)
+    rng = np.random.default_rng(4)
+
+    def simulate(n):
+        s2 = true["omega"] / (1 - true["alpha"] - true["beta"]); out = np.empty(n)
+        z = rng.standard_normal(n)
+        for t in range(n):
+            out[t] = math.sqrt(s2) * z[t]
+            s2 = true["omega"] + true["alpha"] * out[t] ** 2 + true["beta"] * s2
+        return out
+
+    print("     GARCH(1,1) Monte Carlo, truth alpha=0.10 beta=0.85 persistence=0.95")
+    print("     %6s %5s %10s %10s %10s %10s %10s %10s %9s" % ("n", "seeds", "a bias", "a rmse", "b bias", "b rmse", "p bias", "p rmse", "converged"))
+    all_ok = True
+    for n, seeds in ((500, 200), (2000, 200)):
+        A, B, conv = [], [], 0
+        for _ in range(seeds):
+            m = garch_fit(simulate(n))
+            A.append(m.alpha); B.append(m.beta); conv += m.converged
+            all_ok &= math.isfinite(m.loglik)
+        A, B = np.array(A), np.array(B); P = A + B
+        row = (n, seeds, A.mean() - 0.10, math.sqrt(np.mean((A - 0.10) ** 2)),
+               B.mean() - 0.85, math.sqrt(np.mean((B - 0.85) ** 2)),
+               P.mean() - 0.95, math.sqrt(np.mean((P - 0.95) ** 2)), f"{conv}/{seeds}")
+        print("     %6d %5d %+10.4f %10.4f %+10.4f %10.4f %+10.4f %10.4f %9s" % row)
+        if n == 2000:
+            all_ok &= abs(np.median(P) - 0.95) < 0.03 and conv == seeds
+    check("garch fit Monte Carlo sanity (median persistence within 0.03, all converged)", all_ok, "see table")
+
+    # Head-to-head with arch on 20 fresh samples (arch on x100 data, its own tolerance ~1e-4)
+    diffs = []
+    for _ in range(20):
+        r = simulate(2000)
+        ours = garch_fit(r)
+        am = ZeroMean(r * 100, rescale=False); am.volatility = GARCH(p=1, q=1); am.distribution = Normal()
+        res = am.fit(disp="off", backcast=float(np.mean(r * r)) * 1e4, options={"ftol": 1e-15, "maxiter": 5000}, tol=1e-13)
+        diffs.append((abs(ours.alpha - res.params["alpha[1]"]), abs(ours.beta - res.params["beta[1]"])))
+    diffs = np.array(diffs)
+    check("garch fit vs arch on 20 samples (same likelihood)", float(diffs.max()) < 5e-5,
+          f"max |alpha diff| {diffs[:, 0].max():.1e}, max |beta diff| {diffs[:, 1].max():.1e}")
+
+
+# ------------------------------------------------------ 5. range estimators
+def check_range():
+    rng = np.random.default_rng(5)
+    n = 300
+    o = 100 * np.exp(0.01 * rng.standard_normal(n))
+    c = o * np.exp(0.01 * rng.standard_normal(n))
+    h = np.maximum(o, c) * np.exp(np.abs(0.005 * rng.standard_normal(n)))
+    l = np.minimum(o, c) * np.exp(-np.abs(0.005 * rng.standard_normal(n)))
+    h[10] = l[10] - 1        # high < low
+    c[20] = h[20] * 1.01     # close above high
+    o[30] = np.nan
+    hl = np.log(h) - np.log(l); co = np.log(c) - np.log(o)
+    bad = ~np.isfinite(o) | ~np.isfinite(c) | ~np.isfinite(h) | ~np.isfinite(l) | (h < l) | (o < l) | (o > h) | (c < l) | (c > h)
+    ref_p = np.where(np.isfinite(h) & np.isfinite(l) & (h >= l), np.sqrt(hl ** 2 / (4 * math.log(2))), np.nan)
+    ref_gk = np.where(bad, np.nan, np.sqrt(0.5 * hl ** 2 - (2 * math.log(2) - 1) * co ** 2))
+    out_p = np.empty(n); out_gk = np.empty(n)
+    assert L.mlr_parkinson_vol(ptr(arr(h)), ptr(arr(l)), n, ptr(out_p)) == OK
+    assert L.mlr_garman_klass_vol(ptr(arr(o)), ptr(arr(h)), ptr(arr(l)), ptr(arr(c)), n, ptr(out_gk)) == OK
+    e1, e2 = max_abs(out_p, ref_p), max_abs(out_gk, ref_gk)
+    check("parkinson vs numpy", e1 < 1e-15, f"max abs err {e1:.2e}")
+    check("garman-klass vs numpy (incl. inconsistent bars)", e2 < 1e-15, f"max abs err {e2:.2e}")
+
+
+# ------------------------------------------------------- 6. kelly, drawdown
+def check_sizing():
+    rng = np.random.default_rng(6)
+    r = 0.01 * rng.standard_normal(250) + 0.0005
+    f = C.c_double()
+    assert L.mlr_kelly_fraction(ptr(arr(r)), len(r), 0.5, C.byref(f)) == OK
+    ref = 0.5 * r.mean() / r.var(ddof=1)
+    check("kelly vs numpy mean/var(ddof=1)", abs(f.value - ref) < 1e-12 * abs(ref), f"abs err {abs(f.value - ref):.2e}")
+
+    eq = 100 * np.cumprod(1 + r)
+    out = np.empty_like(eq)
+    assert L.mlr_drawdown_scale(ptr(arr(eq)), len(eq), 0.1, ptr(out)) == OK
+    dd = 1 - eq / np.maximum.accumulate(eq)
+    ref = np.clip(1 - dd / 0.1, 0, 1)
+    check("drawdown scale vs numpy maximum.accumulate", max_abs(out, ref) < 1e-15, f"max abs err {max_abs(out, ref):.2e}")
+
+    sigma = 0.01 * np.exp(0.3 * rng.standard_normal(100)); price = 50 + 10 * rng.random(100)
+    pos = vol_target(sigma, 0.01, 1e5, price, 2.0)
+    ref = np.minimum(0.01 / sigma * 1e5 / price, 2.0 * 1e5 / price)
+    check("vol targeting vs numpy (with leverage cap)", max_abs(pos, ref) < 1e-9, f"max abs err {max_abs(pos, ref):.2e}")
+
+
+# ------------------------------------------------------------ 7. ridge
+def check_ridge():
+    from sklearn.linear_model import LinearRegression, Ridge
+    rng = np.random.default_rng(7)
+    worst = 0.0
+    for d in (1, 3, 8):
+        for ridge in (0.0, 0.1, 10.0):
+            for scale in (1e-6, 1.0, 1e6):
+                n = 60
+                X = scale * rng.standard_normal((n, d)); w_true = rng.standard_normal(d) / scale
+                y = X @ w_true + 0.5 + 0.1 * rng.standard_normal(n)
+                st, w, b = ridge_fit(X, y, ridge)
+                assert st == OK
+                if ridge == 0:
+                    sk = LinearRegression().fit(X, y)
+                else:
+                    sk = Ridge(alpha=ridge, fit_intercept=True, solver="cholesky").fit(X, y)
+                # closed form on centered data
+                Xc = X - X.mean(0); yc = y - y.mean()
+                w_cf = np.linalg.solve(Xc.T @ Xc + ridge * np.eye(d), Xc.T @ yc); b_cf = y.mean() - X.mean(0) @ w_cf
+                pred = X @ w + b
+                worst = max(worst,
+                            float(np.max(np.abs(pred - sk.predict(X)))) / float(np.std(y)),
+                            float(np.max(np.abs(pred - (X @ w_cf + b_cf)))) / float(np.std(y)))
+    check("ridge vs scikit-learn and closed form (d 1..8, ridge 0..10, scale 1e-6..1e6)", worst < 1e-8,
+          f"max prediction err / std(y) {worst:.2e}")
+
+
+# ------------------------------------------------------------ 8. splits
+def ref_splits(n, train, test, step, purge, embargo, post):
+    out = []; start = 0
+    while start + train + test <= n:
+        ts = start + train; te = ts + test
+        ps = te + embargo if (post and te + embargo < n) else n
+        out.append((start, ts - purge, ts, te, ps, n))
+        start += step
+    return out
+
+
+def check_splits():
+    cases = mismatches = 0
+    for n in (0, 1, 10, 60, 100, 257):
+        for train in (1, 5, 20):
+            for test in (1, 7, 10):
+                for step in (1, 3, 10):
+                    for purge in (0, 2):
+                        if purge >= train:
+                            continue
+                        for embargo in (0, 3, 100):
+                            for post in (0, 1):
+                                st, got = splits(n, train, test, step, purge, embargo, post)
+                                ref = ref_splits(n, train, test, step, purge, embargo, post)
+                                cases += 1
+                                if st != OK or got != ref:
+                                    mismatches += 1
+                                    continue
+                                for (a, b, c, d, e, f) in got:
+                                    assert a < b <= c < d <= e <= f, (n, train, test, step, purge, embargo, post)
+                                    assert c - b == purge
+                                    assert e == f or e >= d + embargo
+    check("walk-forward splits vs independent generator", mismatches == 0,
+          f"{cases} parameter sets, {mismatches} mismatches; ordering/purge/embargo invariants hold on every split")
+
+
+# ------------------------------------------------------- 9. lookahead sweep
+def same_prefix(a, b, t):
+    a, b = a[:t + 1], b[:t + 1]
+    return np.array_equal(np.isnan(a), np.isnan(b)) and np.array_equal(a[~np.isnan(a)], b[~np.isnan(b)])
+
+
+def check_lookahead():
+    rng = np.random.default_rng(9)
+    n = 300; trials = 40; bad = []
+    m = Garch(omega=1e-6, alpha=0.1, beta=0.85, backcast=0.0, converged=1)
+    for _ in range(trials):
+        x = 100 + rng.standard_normal(n); r = 0.01 * rng.standard_normal(n)
+        t = int(rng.integers(5, n - 5))
+        x2 = x.copy(); x2[t + 1:] = 100 + rng.standard_normal(n - t - 1)
+        r2 = r.copy(); r2[t + 1:] = 0.01 * rng.standard_normal(n - t - 1)
+        for name, f in (("rolling_mean", lambda v: rolling_mean(v, 7)), ("rolling_std", lambda v: rolling_std(v, 7))):
+            if not same_prefix(f(x), f(x2), t):
+                bad.append(name)
+        if not same_prefix(ewma(r, 0.94), ewma(r2, 0.94), t):
+            bad.append("ewma")
+        if not same_prefix(garch_filter(m, r), garch_filter(m, r2), t):
+            bad.append("garch_filter")
+    check("no lookahead: outputs through t are bit-identical when data after t changes",
+          not bad, f"{trials} trials x 4 functions, violations: {sorted(set(bad)) or 'none'}")
+
+    # Range estimators are contemporaneous by definition: out[t] moves only with bar t
+    h = 101 + rng.random(n); l = 99 - rng.random(n)
+    out = np.empty(n); out2 = np.empty(n)
+    assert L.mlr_parkinson_vol(ptr(arr(h)), ptr(arr(l)), n, ptr(out)) == OK
+    h2 = h.copy(); h2[150] += 1
+    assert L.mlr_parkinson_vol(ptr(arr(h2)), ptr(arr(l)), n, ptr(out2)) == OK
+    changed = np.nonzero(out != out2)[0]
+    check("range estimators are contemporaneous (changing bar 150 changes only out[150])",
+          changed.tolist() == [150], f"indices changed: {changed.tolist()}")
+
+
+# ------------------------------------------------- 10. vol targeting loop
+MASK = (1 << 64) - 1
+
+
+def lcg_u01(state):
+    state = (state * 6364136223846793005 + 1442695040888963407) & MASK
+    return state, ((state >> 11) + 0.5) / 9007199254740992.0
+
+
+def demo_simulate(seed, n=1500):
+    """Mirror of simulate() in examples/vol_target_demo.c."""
+    omega, alpha, beta = 2e-6, 0.10, 0.85
+    s2 = omega / (1 - alpha - beta); state = seed
+    returns = np.zeros(n); prices = np.zeros(n); prices[0] = 100.0
+    for t in range(1, n):
+        state, u1 = lcg_u01(state); state, u2 = lcg_u01(state)
+        z = math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * 3.14159265358979323846 * u2)
+        returns[t] = math.sqrt(s2) * z
+        prices[t] = prices[t - 1] * (1.0 + returns[t])
+        s2 = omega + alpha * returns[t] ** 2 + beta * s2
+    return returns, prices
+
+
+def demo_folds(seed, target=0.01, equity=1e5, lev=3.0, train=500, test=250):
+    returns, prices = demo_simulate(seed)
+    _, sp = splits(len(returns), train, test, test, 0, 0, 0)
+    rows = []
+    for (a, b, c, d, _, _) in sp:
+        m = garch_fit(returns[a:b])
+        sigma = garch_filter(m, returns[a:d])           # sigma[t-a] forecasts period t from returns before t
+        sig_test = sigma[c - a:d - a]; entry = prices[c - 1:d - 1]
+        pos = vol_target(sig_test, target, equity, entry, lev)
+        gain = pos * entry * returns[c:d]
+        rows.append((c, d, m.alpha, m.beta, m.converged, np.std(gain / equity), gain.sum()))
+    return rows
+
+
+def check_vol_targeting_loop():
+    ratios = []; conv = True
+    for seed in range(1, 51):
+        for (_, _, _, _, cv, rv, _) in demo_folds(seed):
+            ratios.append(rv / 0.01); conv &= bool(cv)
+    ratios = np.array(ratios)
+    check("walk-forward vol targeting: realized vol / target over 50 seeds x 4 folds",
+          abs(ratios.mean() - 1) < 0.10 and conv,
+          f"mean {ratios.mean():.3f}, sd {ratios.std():.3f}, min {ratios.min():.3f}, max {ratios.max():.3f}, all folds converged: {conv}")
+
+    demo = os.environ.get("MLRISK_DEMO")
+    if demo:
+        out = subprocess.check_output([demo, "42"], text=True).splitlines()
+        printed = [float(line.split()[-1]) for line in out if line.strip() and line.split()[0].isdigit()]
+        ours = [row[-1] for row in demo_folds(42)]
+        err = max(abs(p - o) for p, o in zip(printed, ours))
+        check("example binary PnL matches recomputation from raw arrays (seed 42)",
+              len(printed) == len(ours) and err < 0.05, f"max |diff| {err:.4f} currency units over {len(ours)} folds")
+
+
+if __name__ == "__main__":
+    warnings.simplefilter("ignore", RuntimeWarning)
+    np.seterr(all="ignore")
+    for fn in (check_rolling, check_ewma, check_garch_filter_forecast, check_garch_fit_montecarlo,
+               check_range, check_sizing, check_ridge, check_splits, check_lookahead, check_vol_targeting_loop):
+        fn()
+    print()
+    if FAILURES:
+        print(f"FAILED: {len(FAILURES)} check(s): {FAILURES}")
+        sys.exit(1)
+    print("All reference checks passed")

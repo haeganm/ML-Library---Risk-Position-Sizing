@@ -134,7 +134,7 @@ static int test_drawdown_scale(void) {
     double bad[] = {100.0, 0.0};
     ASSERT(mlr_drawdown_scale(bad, 2, 0.2, scale) == MLR_EDOMAIN, "non-positive equity -> EDOMAIN");
     bad[1] = MLR_NAN;
-    ASSERT(mlr_drawdown_scale(bad, 2, 0.2, scale) == MLR_EDOMAIN, "NAN equity -> EDOMAIN");
+    ASSERT(mlr_drawdown_scale(bad, 2, 0.2, scale) == MLR_EINVAL, "NAN equity -> EINVAL");
     PASS("drawdown scale");
 }
 

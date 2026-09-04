@@ -85,7 +85,10 @@ mlr_status mlr_drawdown_scale(const double *equity, size_t n, double max_dd, dou
 
     // Equity is a cumulative path: one bad value would poison the running peak
     for (size_t i = 0; i < n; i++) {
-        if (!mlr_isfinite(equity[i]) || equity[i] <= 0.0) {
+        if (!mlr_isfinite(equity[i])) {
+            return MLR_EINVAL;
+        }
+        if (equity[i] <= 0.0) {
             return MLR_EDOMAIN;
         }
     }

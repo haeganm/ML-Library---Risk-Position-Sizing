@@ -13,9 +13,11 @@
  *
  * Timing contract: sigma[t] must be a forecast for period t made from
  * information available at the close of t-1. position_out[t] is then the
- * position held over period t and its PnL is position_out[t] * returns[t].
- * mlr_ewma_vol and mlr_garch_filter already produce forecasts aligned this
- * way; per-bar range estimators must be lagged one bar first.
+ * position (in units) entered at the close of t-1 at price[t-1] and held
+ * over period t, so its PnL is position_out[t] * price[t-1] * returns[t].
+ * Pass price[t-1] as the price for index t. mlr_ewma_vol and
+ * mlr_garch_filter already produce forecasts aligned this way; per-bar
+ * range estimators must be lagged one bar first.
  */
 
 #ifdef __cplusplus
@@ -70,8 +72,9 @@ mlr_status mlr_vol_target_position(
  * @param n Number of returns (>= 2)
  * @param fraction Kelly multiplier: 1.0 = full Kelly, 0.5 = half Kelly (> 0)
  * @param f_out Receives the Kelly fraction of equity
- * @return MLR_OK on success, MLR_EINVAL on invalid input, MLR_EDOMAIN if the
- *         returns have zero variance or the estimate is not finite
+ * @return MLR_OK on success, MLR_EINVAL on invalid input (including a
+ *         non-finite return), MLR_EDOMAIN if the returns have zero variance
+ *         or the estimate is not finite
  */
 mlr_status mlr_kelly_fraction(const double *returns, size_t n, double fraction, double *f_out);
 
@@ -89,8 +92,8 @@ mlr_status mlr_kelly_fraction(const double *returns, size_t n, double fraction, 
  * @param n Number of samples
  * @param max_dd Drawdown at which exposure reaches zero, in (0, 1]
  * @param scale_out Output scale factors in [0, 1] (length n, pre-allocated)
- * @return MLR_OK on success, MLR_EINVAL on invalid input,
- *         MLR_EDOMAIN if any equity value is non-finite or <= 0
+ * @return MLR_OK on success, MLR_EINVAL on invalid input (including a
+ *         non-finite equity value), MLR_EDOMAIN if any equity value is <= 0
  */
 mlr_status mlr_drawdown_scale(const double *equity, size_t n, double max_dd, double *scale_out);
 

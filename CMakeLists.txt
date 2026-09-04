@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(mlrisk VERSION 3.0.0 LANGUAGES C)
+project(mlrisk VERSION 3.1.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -8,6 +8,9 @@ set(CMAKE_C_EXTENSIONS OFF)
 option(MLRISK_WERROR "Treat warnings as errors" ${PROJECT_IS_TOP_LEVEL})
 option(MLRISK_BUILD_TESTS "Build the test suite" ${PROJECT_IS_TOP_LEVEL})
 option(MLRISK_BUILD_EXAMPLES "Build the examples" ${PROJECT_IS_TOP_LEVEL})
+option(MLRISK_INSTALL "Generate install and export rules" ${PROJECT_IS_TOP_LEVEL})
+
+include(GNUInstallDirs)
 
 if(MSVC)
     set(MLRISK_COMPILE_OPTIONS /W4 /fp:precise $<$<BOOL:${MLRISK_WERROR}>:/WX>)
@@ -34,7 +37,7 @@ target_compile_options(mlrisk PRIVATE ${MLRISK_COMPILE_OPTIONS})
 target_include_directories(mlrisk PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
-    $<INSTALL_INTERFACE:include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 if(UNIX)
     target_link_libraries(mlrisk PUBLIC m)
@@ -63,7 +66,7 @@ if(MLRISK_BUILD_EXAMPLES)
     target_link_libraries(vol_target_demo PRIVATE mlrisk::mlrisk)
 endif()
 
-include(GNUInstallDirs)
+if(MLRISK_INSTALL)
 include(CMakePackageConfigHelpers)
 
 install(TARGETS mlrisk EXPORT mlriskTargets
@@ -89,3 +92,4 @@ install(FILES
 configure_file(cmake/mlrisk.pc.in ${CMAKE_CURRENT_BINARY_DIR}/mlrisk.pc @ONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mlrisk.pc
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+endif()

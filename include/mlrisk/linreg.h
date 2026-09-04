@@ -50,10 +50,10 @@ void mlr_lin_model_free(mlr_lin_model *model);
  *
  *   (Xc^T Xc + ridge * I) w = Xc^T yc,   b = mean(y) - mean(X) . w
  *
- * With ridge == 0 the system must be full rank, which needs n > d and
- * linearly independent columns; otherwise MLR_EDOMAIN. With ridge > 0 the
- * system is always solvable. Note that n <= d with ridge == 0 is an exactly
- * determined fit with zero residual, which is never what you want.
+ * With ridge == 0 the system must be full rank, which needs n > d (centering
+ * costs one rank) and linearly independent columns; otherwise MLR_EDOMAIN.
+ * With ridge > 0 the system is always solvable, including degenerate cases
+ * such as n == 1, which fits w = 0 and b = y[0].
  *
  * @param X Feature matrix, row-major: X[i*d + j] is sample i, feature j (all finite)
  * @param y Target (length n, all finite)
@@ -75,6 +75,9 @@ mlr_status mlr_linreg_fit(
 
 /**
  * @brief Predict y = X w + b
+ *
+ * X is not validated for finiteness; a non-finite feature gives a non-finite
+ * prediction.
  *
  * @param X Feature matrix, row-major (n rows, d columns)
  * @param n Number of samples

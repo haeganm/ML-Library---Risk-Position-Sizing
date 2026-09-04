@@ -31,11 +31,11 @@ extern "C" {
 mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *out);
 
 /**
- * @brief Rolling standard deviation, O(n) amortized
+ * @brief Rolling standard deviation, O(n) on clean data
  *
  * Rolling Welford updates on offset-shifted values, so precision does not
- * degrade at large price levels. After a window containing missing data
- * the accumulators are rebuilt once in O(window).
+ * degrade at large price levels. After each gap (a window containing a
+ * non-finite value) the accumulators are rebuilt in O(window).
  *
  * @param x Input (length n)
  * @param n Length of x
@@ -53,8 +53,8 @@ mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *out
  *   sigma2[t] = lambda * sigma2[t-1] + (1 - lambda) * returns[t-1]^2
  *
  * so position sizes computed from out[t] can be applied to returns[t]
- * without lookahead. The first finite return r[s] seeds the variance:
- * out[0..s] are MLR_NAN and out[s+1] = |r[s]|. That seed is a single
+ * without lookahead. The first usable return r[s] (finite, with a finite
+ * square) seeds the variance: out[0..s] are MLR_NAN and out[s+1] = |r[s]|. That seed is a single
  * observation; at lambda 0.94 its weight decays below 5% after about 50
  * periods, so treat the start of the series as warmup.
  *

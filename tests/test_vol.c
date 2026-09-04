@@ -17,26 +17,35 @@ static int test_parkinson_known_answer(void) {
     ASSERT(mlr_isnan(out[3]), "overflowing ratio gives NAN");
 
     ASSERT(mlr_parkinson_vol(NULL, low, 3, out) == MLR_EINVAL, "NULL high -> EINVAL");
+    ASSERT(mlr_parkinson_vol(high, low, 3, NULL) == MLR_EINVAL, "NULL out -> EINVAL");
     ASSERT(mlr_parkinson_vol(high, low, 0, out) == MLR_EINVAL, "n=0 -> EINVAL");
     PASS("parkinson known answer");
 }
 
 static int test_garman_klass_known_answer(void) {
     // Bar 0: open == close kills the second term -> sigma = sqrt(0.5)*ln(h/l)
-    // Bar 1: tiny range, big close-open move -> negative sigma2 -> NAN
-    // Bar 2: zero price -> NAN
-    double open[] = {100.0, 100.0, 100.0};
-    double high[] = {102.0, 100.5, 102.0};
-    double low[] = {100.0, 99.9, 100.0};
-    double close[] = {100.0, 110.0, 0.0};
-    double out[3];
+    // Bar 1: close above high (inconsistent bar) -> NAN
+    // Bar 2: zero close -> NAN
+    // Bar 3: open below low -> NAN
+    // Bar 4: open at the low, close at the high: the smallest possible
+    //        estimate for the range, (0.5 - (2 ln 2 - 1)) * hl^2, still positive
+    double open[] = {100.0, 100.0, 100.0, 99.0, 100.0};
+    double high[] = {102.0, 100.5, 102.0, 102.0, 101.0};
+    double low[] = {100.0, 99.9, 100.0, 100.0, 100.0};
+    double close[] = {100.0, 110.0, 0.0, 101.0, 101.0};
+    double out[5];
 
-    ASSERT(mlr_garman_klass_vol(open, high, low, close, 3, out) == MLR_OK, "garman-klass returns MLR_OK");
+    ASSERT(mlr_garman_klass_vol(open, high, low, close, 5, out) == MLR_OK, "garman-klass returns MLR_OK");
     ASSERT_NEAR(out[0], sqrt(0.5) * log(102.0 / 100.0), TOL, "garman-klass known answer");
-    ASSERT(mlr_isnan(out[1]), "negative sigma2 gives NAN");
+    ASSERT(mlr_isnan(out[1]), "close outside [low, high] gives NAN");
     ASSERT(mlr_isnan(out[2]), "non-positive close gives NAN");
+    ASSERT(mlr_isnan(out[3]), "open outside [low, high] gives NAN");
+    double hl = log(1.01);
+    ASSERT_NEAR(out[4], sqrt((0.5 - (2.0 * log(2.0) - 1.0)) * hl * hl), TOL,
+                "full-range move gives the minimum positive estimate");
 
     ASSERT(mlr_garman_klass_vol(NULL, high, low, close, 3, out) == MLR_EINVAL, "NULL open -> EINVAL");
+    ASSERT(mlr_garman_klass_vol(open, high, low, close, 3, NULL) == MLR_EINVAL, "NULL out -> EINVAL");
     ASSERT(mlr_garman_klass_vol(open, high, low, close, 0, out) == MLR_EINVAL, "n=0 -> EINVAL");
     PASS("garman-klass known answer");
 }
@@ -109,6 +118,14 @@ static int test_garch_filter_missing_data(void) {
     ASSERT_NEAR(sigma[1], sqrt(s2_1), 1e-12, "forecast at the missing bar is still emitted");
     ASSERT_NEAR(sigma[2], sqrt(s2_2), 1e-12, "recursion steps its forecast over the gap");
     ASSERT_NEAR(sigma[3], sqrt(s2_3), 1e-12, "missing-data step 3");
+
+    // A finite return whose square overflows is treated the same way
+    double huge[] = {1.0, 1e200, -1.0, 0.5};
+    double sigma_huge[4];
+    ASSERT(mlr_garch_filter(&model, huge, 4, sigma_huge) == MLR_OK, "filter with overflowing return OK");
+    for (size_t t = 0; t < 4; t++) {
+        ASSERT(sigma_huge[t] == sigma[t], "overflowing return behaves as missing");
+    }
     PASS("garch filter missing data");
 }
 
@@ -206,10 +223,12 @@ static int test_garch_fit_matches_arch(void) {
         {777, 5e-6, 0.05, 0.93, 1500,
          5.176457051708e-06, 0.050852929935, 0.925219134086, 5606.487198},
     };
-    static double returns[2000];
+    enum { MAX_N = 2000 };
+    static double returns[MAX_N];
 
     for (size_t c = 0; c < sizeof cases / sizeof cases[0]; c++) {
         const arch_case *k = &cases[c];
+        ASSERT(k->n <= MAX_N, "reference sample fits the buffer");
         simulate_garch(k->seed, k->omega, k->alpha, k->beta, k->n, returns);
 
         mlr_garch model;

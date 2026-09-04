@@ -29,8 +29,6 @@ static int test_rolling_mean_edge_cases(void) {
     ASSERT(mlr_rolling_mean(x, 1, 1, NULL) == MLR_EINVAL, "NULL out -> EINVAL");
     ASSERT(mlr_rolling_mean(x, 0, 1, out) == MLR_EINVAL, "n=0 -> EINVAL");
     ASSERT(mlr_rolling_mean(x, 1, 0, out) == MLR_EINVAL, "window=0 -> EINVAL");
-    ASSERT(mlr_rolling_std(x, 0, 1, out) == MLR_EINVAL, "std n=0 -> EINVAL");
-    ASSERT(mlr_rolling_std(NULL, 1, 1, out) == MLR_EINVAL, "std NULL x -> EINVAL");
     PASS("rolling_mean edge cases");
 }
 
@@ -47,18 +45,21 @@ static int test_rolling_std_basic(void) {
 }
 
 // Two-pass population statistics over x[lo..hi], the reference the O(n)
-// algorithms are checked against
+// algorithms are checked against. Computed on values shifted by x[lo] so the
+// reference itself stays exact at large levels (a plain two-pass at 1e9
+// rounds its mean at 1e-5 and its std at 1e-11).
 static void naive_stats(const double *x, size_t lo, size_t hi, double *mean_out, double *std_out) {
+    double base = x[lo];
     double mean = 0.0;
-    for (size_t j = lo; j <= hi; j++) mean += x[j];
+    for (size_t j = lo; j <= hi; j++) mean += x[j] - base;
     mean /= (double)(hi - lo + 1);
     double var = 0.0;
     for (size_t j = lo; j <= hi; j++) {
-        double d = x[j] - mean;
+        double d = (x[j] - base) - mean;
         var += d * d;
     }
     var /= (double)(hi - lo + 1);
-    *mean_out = mean;
+    *mean_out = base + mean;
     *std_out = sqrt(var);
 }
 
@@ -101,6 +102,24 @@ static int test_rolling_std_edge_cases(void) {
 
     ASSERT(mlr_rolling_std(constant, 3, 1, out) == MLR_OK, "window=1 std OK");
     ASSERT(out[0] == 0.0 && out[2] == 0.0, "window=1 std is 0");
+
+    // window == n: a single full window at the last index
+    double x[] = {1.0, 2.0, 3.0, 4.0};
+    ASSERT(mlr_rolling_mean(x, 4, 4, out) == MLR_OK, "window=n mean OK");
+    ASSERT(mlr_isnan(out[2]) && out[3] == 2.5, "window=n mean is the full-sample mean");
+    ASSERT(mlr_rolling_std(x, 4, 4, out) == MLR_OK, "window=n std OK");
+    ASSERT_NEAR(out[3], sqrt(1.25), 1e-12, "window=n std is the full-sample std");
+
+    // All non-finite input: every output NAN, no error
+    double bad[] = {MLR_NAN, INFINITY, MLR_NAN};
+    ASSERT(mlr_rolling_mean(bad, 3, 2, out) == MLR_OK, "all-NAN mean OK");
+    ASSERT(mlr_isnan(out[1]) && mlr_isnan(out[2]), "all-NAN mean gives NAN");
+    ASSERT(mlr_rolling_std(bad, 3, 2, out) == MLR_OK, "all-NAN std OK");
+    ASSERT(mlr_isnan(out[1]) && mlr_isnan(out[2]), "all-NAN std gives NAN");
+
+    ASSERT(mlr_rolling_std(x, 0, 1, out) == MLR_EINVAL, "std n=0 -> EINVAL");
+    ASSERT(mlr_rolling_std(NULL, 1, 1, out) == MLR_EINVAL, "std NULL x -> EINVAL");
+    ASSERT(mlr_rolling_std(x, 1, 1, NULL) == MLR_EINVAL, "std NULL out -> EINVAL");
     PASS("rolling_std edge cases");
 }
 
@@ -124,8 +143,8 @@ static int test_rolling_shift_invariance(void) {
     for (size_t i = W - 1; i < N; i++) {
         double mean, sd;
         naive_stats(shifted, i - W + 1, i, &mean, &sd);
-        ASSERT_NEAR(std_out[i], sd, 1e-12, "std at level 1e9 matches two-pass to 1e-12");
-        ASSERT_NEAR(mean_out[i], mean, 1e-6, "mean at level 1e9 matches two-pass");
+        ASSERT_NEAR(std_out[i], sd, 1e-12, "std at level 1e9 matches the exact reference to 1e-12");
+        ASSERT_NEAR(mean_out[i], mean, 1e-6, "mean at level 1e9 matches the exact reference");
     }
     PASS("shift invariance at level 1e9");
 }
@@ -223,6 +242,40 @@ static int test_ewma_vol_missing_data(void) {
     PASS("ewma_vol missing data");
 }
 
+static int test_rolling_prefix_stability(void) {
+    // Output at t depends only on x[0..t]: recomputing on a prefix gives the
+    // prefix of the full result, bit for bit
+    enum { N = 300, HALF = 150 };
+    static double x[N], full[N], prefix[HALF];
+    unsigned long long state = 31;
+    for (size_t i = 0; i < N; i++) x[i] = 1e4 + (test_lcg_u01(&state) - 0.5);
+    x[40] = MLR_NAN;
+
+    size_t windows[] = {1, 7, 50};
+    for (size_t wi = 0; wi < 3; wi++) {
+        ASSERT(mlr_rolling_mean(x, N, windows[wi], full) == MLR_OK, "mean full OK");
+        ASSERT(mlr_rolling_mean(x, HALF, windows[wi], prefix) == MLR_OK, "mean prefix OK");
+        for (size_t i = 0; i < HALF; i++) {
+            ASSERT(full[i] == prefix[i] || (mlr_isnan(full[i]) && mlr_isnan(prefix[i])),
+                   "rolling mean is prefix-stable");
+        }
+        ASSERT(mlr_rolling_std(x, N, windows[wi], full) == MLR_OK, "std full OK");
+        ASSERT(mlr_rolling_std(x, HALF, windows[wi], prefix) == MLR_OK, "std prefix OK");
+        for (size_t i = 0; i < HALF; i++) {
+            ASSERT(full[i] == prefix[i] || (mlr_isnan(full[i]) && mlr_isnan(prefix[i])),
+                   "rolling std is prefix-stable");
+        }
+    }
+
+    ASSERT(mlr_ewma_vol(x, N, 0.94, full) == MLR_OK, "ewma full OK");
+    ASSERT(mlr_ewma_vol(x, HALF, 0.94, prefix) == MLR_OK, "ewma prefix OK");
+    for (size_t i = 0; i < HALF; i++) {
+        ASSERT(full[i] == prefix[i] || (mlr_isnan(full[i]) && mlr_isnan(prefix[i])),
+               "ewma is prefix-stable");
+    }
+    PASS("prefix stability");
+}
+
 int test_rolling(void) {
     int failures = 0;
     failures += test_rolling_mean_basic();
@@ -235,5 +288,6 @@ int test_rolling(void) {
     failures += test_ewma_vol_known_answer();
     failures += test_ewma_vol_invalid_inputs();
     failures += test_ewma_vol_missing_data();
+    failures += test_rolling_prefix_stability();
     return failures;
 }

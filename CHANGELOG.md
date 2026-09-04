@@ -1,5 +1,55 @@
 # Changelog
 
+## 3.1.0 (2026-09-03)
+
+Verification release. Every public function is now compared against an
+independent implementation on every push, and the pass turned up a handful
+of contract gaps.
+
+### Fixed
+
+- `mlr_garch_filter` treated a finite return whose square overflows as data,
+  pinning every later sigma at `Inf` with `MLR_OK`; it is now treated as
+  missing, the same rule EWMA already used.
+- `mlr_garman_klass_vol` accepted bars with the open or close outside
+  `[low, high]`. They now give `NAN`. On a consistent bar the estimator is
+  bounded below by `0.114 * ln(high/low)^2`, so the "negative variance"
+  branch was unreachable and has been removed from the code and the docs.
+- The installed `mlrisk.pc` hard-coded the configure-time prefix, so an
+  install with `--prefix` produced a pkg-config file pointing at the wrong
+  tree. It is now relocatable (`${pcfiledir}/../..`).
+- `$<INSTALL_INTERFACE>` hard-coded `include` instead of
+  `CMAKE_INSTALL_INCLUDEDIR`; install and export rules are now behind
+  `MLRISK_INSTALL` so a parent project does not inherit them.
+- A GCC `-Wmaybe-uninitialized` in the GARCH grid search would have failed
+  the `-Werror` build on the Linux/gcc CI leg.
+- `mlr_drawdown_scale` returned `MLR_EDOMAIN` for a non-finite equity value
+  while every other function returns `MLR_EINVAL` for non-finite input; it
+  now returns `MLR_EINVAL` (non-positive equity is still `MLR_EDOMAIN`).
+- Header and README claims corrected: the PnL of a position is
+  `position[t] * price[t-1] * returns[t]` (the price factor was missing);
+  the GARCH constraint is `alpha + beta < 0.9999`; only alpha and beta are
+  scale invariant; `n <= d` with `ridge == 0` returns `MLR_EDOMAIN` rather
+  than fitting exactly; rolling std is O(n) on clean data with an O(window)
+  rebuild after each gap.
+
+### Added
+
+- `tests/reference/reference_check.py`: 20 checks of the compiled C against
+  pandas, numpy, scikit-learn, `arch`, exact rational arithmetic, an
+  independent split generator, a bitwise no-lookahead sweep, a 400-fit
+  GARCH Monte Carlo, and a reconciliation of the example's printed PnL.
+  A `reference` CI job runs it on every push.
+- Prefix-stability tests for EWMA and the rolling statistics (previously
+  only the GARCH filter had one), tests for `window == n`, all-NaN rolling
+  input, NULL outputs on the range estimators, and the GARCH filter
+  overflow rule.
+- The sanitizer CI job also runs the example; the Windows example step
+  declares its shell; the workflow passes `actionlint`.
+- The C two-pass reference in the rolling tests is computed on shifted
+  values so that it is itself exact at large levels.
+
+
 ## 3.0.0 (2026-09-03)
 
 Breaking release. Every volatility forecast now shares one timing convention,

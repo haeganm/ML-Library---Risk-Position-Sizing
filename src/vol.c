@@ -177,7 +177,7 @@ mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out) 
     // unconditional variance equal to the backcast
     static const double alphas[] = {0.02, 0.05, 0.10, 0.15};
     static const double betas[] = {0.80, 0.88, 0.94};
-    double best[3];
+    double best[3] = {0.0, 0.0, 0.0};
     double best_f = HUGE_VAL;
 
     for (size_t a = 0; a < sizeof alphas / sizeof alphas[0]; a++) {
@@ -234,8 +234,12 @@ mlr_status mlr_garch_filter(const mlr_garch *model, const double *returns, size_
 
     for (size_t t = 0; t < n; t++) {
         sigma_out[t] = sqrt(s2);
-        // A missing observation has E[r^2 | past] = s2
-        double r2 = mlr_isfinite(returns[t]) ? returns[t] * returns[t] : s2;
+        // A missing observation (or one whose square overflows) is replaced
+        // by its conditional expectation E[r^2 | past] = s2
+        double r2 = returns[t] * returns[t];
+        if (!mlr_isfinite(r2)) {
+            r2 = s2;
+        }
         s2 = model->omega + model->alpha * r2 + model->beta * s2;
     }
 
@@ -303,15 +307,17 @@ mlr_status mlr_garman_klass_vol(const double *open, const double *high,
 
     for (size_t i = 0; i < n; i++) {
         if (bad_hl_bar(high[i], low[i]) ||
-            !mlr_isfinite(open[i]) || open[i] <= 0.0 ||
-            !mlr_isfinite(close[i]) || close[i] <= 0.0) {
+            !mlr_isfinite(open[i]) || open[i] < low[i] || open[i] > high[i] ||
+            !mlr_isfinite(close[i]) || close[i] < low[i] || close[i] > high[i]) {
             out[i] = MLR_NAN;
             continue;
         }
+        // open and close lie in [low, high], so |co| <= hl and
+        // sigma2 >= (0.5 - (2 ln 2 - 1)) * hl^2 >= 0
         double hl = log(high[i] / low[i]);
         double co = log(close[i] / open[i]);
         double sigma2 = 0.5 * hl * hl - (2.0 * LN2 - 1.0) * co * co;
-        out[i] = sigma2 >= 0.0 ? finite_or_nan(sqrt(sigma2)) : MLR_NAN;
+        out[i] = finite_or_nan(sqrt(sigma2));
     }
 
     return MLR_OK;
