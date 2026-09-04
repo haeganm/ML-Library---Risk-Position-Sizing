@@ -1,179 +1,80 @@
 #include "mlrisk/sizing.h"
-#include <stdio.h>
-#include <math.h>
+#include "test_util.h"
 
-#define ASSERT(cond, msg) do { \
-    if (!(cond)) { \
-        printf("  FAIL: %s\n", msg); \
-        return 1; \
-    } \
-} while (0)
-
-#define TOLERANCE 1e-9
+#define TOL 1e-9
 
 static int test_vol_target_position_basic(void) {
     double sigma[] = {0.01, 0.02, 0.015};
     double price[] = {100.0, 100.0, 100.0};
-    double position_out[3];
-    double target_vol = 0.01;
-    double equity = 10000.0;
-    double max_leverage = 2.0;
-    
-    mlr_status status = mlr_vol_target_position(
-        sigma, target_vol, equity, price, max_leverage, 3, position_out
-    );
-    ASSERT(status == MLR_OK, "mlr_vol_target_position should return MLR_OK");
-    
-    // position[0] = (0.01/0.01) * (10000/100) = 100.0
-    ASSERT(fabs(position_out[0] - 100.0) < TOLERANCE, "position[0] should be 100.0");
-    
-    // position[1] = (0.01/0.02) * (10000/100) = 50.0
-    ASSERT(fabs(position_out[1] - 50.0) < TOLERANCE, "position[1] should be 50.0");
-    
-    // position[2] = (0.01/0.015) * (10000/100) ≈ 66.67
-    ASSERT(fabs(position_out[2] - (10000.0 / 150.0)) < TOLERANCE,
-           "position[2] should match expected");
-    
-    printf("  PASS: mlr_vol_target_position basic\n");
-    return 0;
+    double out[3];
+
+    ASSERT(mlr_vol_target_position(sigma, 0.01, 10000.0, price, 2.0, 3, out) == MLR_OK,
+           "vol_target_position returns MLR_OK");
+    ASSERT_NEAR(out[0], 100.0, TOL, "(0.01/0.01)*(10000/100)");
+    ASSERT_NEAR(out[1], 50.0, TOL, "(0.01/0.02)*(10000/100)");
+    ASSERT_NEAR(out[2], 10000.0 / 150.0, TOL, "(0.01/0.015)*(10000/100)");
+    PASS("vol_target_position basic");
 }
 
-static int test_vol_target_position_nan_sigma(void) {
-    double sigma[] = {0.01, MLR_NAN, 0.015, -0.01};
-    double price[] = {100.0, 100.0, 100.0, 100.0};
-    double position_out[4];
-    double target_vol = 0.01;
-    double equity = 10000.0;
-    double max_leverage = 2.0;
-    
-    mlr_status status = mlr_vol_target_position(
-        sigma, target_vol, equity, price, max_leverage, 4, position_out
-    );
-    ASSERT(status == MLR_OK, "mlr_vol_target_position should return MLR_OK");
-    
-    ASSERT(fabs(position_out[0] - 100.0) < TOLERANCE, "position[0] should be 100.0");
-    ASSERT(fabs(position_out[1] - 0.0) < TOLERANCE, "position[1] should be 0.0 (NAN sigma)");
-    ASSERT(fabs(position_out[2] - (10000.0 / 150.0)) < TOLERANCE, "position[2] should be valid");
-    ASSERT(fabs(position_out[3] - 0.0) < TOLERANCE, "position[3] should be 0.0 (negative sigma)");
-    
-    printf("  PASS: mlr_vol_target_position NAN/negative sigma\n");
-    return 0;
+static int test_vol_target_position_bad_sigma_or_price(void) {
+    double sigma[] = {0.01, MLR_NAN, -0.01, INFINITY, 0.01, 0.01, 0.01};
+    double price[] = {100.0, 100.0, 100.0, 100.0, MLR_NAN, INFINITY, 0.0};
+    double out[7];
+
+    ASSERT(mlr_vol_target_position(sigma, 0.01, 10000.0, price, 2.0, 7, out) == MLR_OK,
+           "bad elements do not fail the call");
+    ASSERT_NEAR(out[0], 100.0, TOL, "good element sized");
+    for (size_t i = 1; i < 7; i++) {
+        ASSERT(out[i] == 0.0, "NAN/negative/Inf sigma or NAN/Inf/zero price gives 0");
+    }
+    PASS("vol_target_position bad sigma or price");
 }
 
 static int test_vol_target_position_leverage_cap(void) {
-    double sigma[] = {0.001}; // Very low sigma -> very high position
+    double sigma[] = {0.001};
     double price[] = {100.0};
-    double position_out[1];
-    double target_vol = 0.01;
-    double equity = 10000.0;
-    double max_leverage = 2.0;
-    
-    mlr_status status = mlr_vol_target_position(
-        sigma, target_vol, equity, price, max_leverage, 1, position_out
-    );
-    ASSERT(status == MLR_OK, "mlr_vol_target_position should return MLR_OK");
-    
-    // Without cap: position = (0.01/0.001) * (10000/100) = 1000.0
-    // With cap: max_notional = 2.0 * 10000 = 20000, so position = 20000/100 = 200.0
-    ASSERT(fabs(position_out[0] - 200.0) < TOLERANCE,
-           "position should be capped by leverage");
-    
-    printf("  PASS: mlr_vol_target_position leverage cap\n");
-    return 0;
-}
+    double out[1];
 
-static int test_vol_target_position_decreasing_with_sigma(void) {
-    double sigma[] = {0.01, 0.02, 0.03, 0.04};
-    double price[] = {100.0, 100.0, 100.0, 100.0};
-    double position_out[4];
-    double target_vol = 0.01;
-    double equity = 10000.0;
-    double max_leverage = 10.0; // High leverage to avoid capping
-    
-    mlr_status status = mlr_vol_target_position(
-        sigma, target_vol, equity, price, max_leverage, 4, position_out
-    );
-    ASSERT(status == MLR_OK, "mlr_vol_target_position should return MLR_OK");
-    
-    // Position should decrease as sigma increases
-    for (size_t i = 1; i < 4; i++) {
-        ASSERT(position_out[i] < position_out[i-1],
-               "position should decrease as sigma increases");
-    }
-    
-    printf("  PASS: mlr_vol_target_position decreasing with sigma\n");
-    return 0;
+    // Uncapped: (0.01/0.001)*(10000/100) = 1000; cap: 2*10000/100 = 200
+    ASSERT(mlr_vol_target_position(sigma, 0.01, 10000.0, price, 2.0, 1, out) == MLR_OK, "OK");
+    ASSERT_NEAR(out[0], 200.0, TOL, "position capped at max_leverage * equity / price");
+    PASS("vol_target_position leverage cap");
 }
 
 static int test_vol_target_position_as_risk_cap(void) {
     // Risk capping is the same formula with target_vol read as the risk cap
     double sigma[] = {0.01, 0.02};
     double price[] = {100.0, 100.0};
-    double position_out[2];
-    double risk_cap = 0.02; // 2% risk per position
-    double equity = 10000.0;
-    double max_leverage = 2.0;
+    double out[2];
 
-    mlr_status status = mlr_vol_target_position(
-        sigma, risk_cap, equity, price, max_leverage, 2, position_out
-    );
-    ASSERT(status == MLR_OK, "mlr_vol_target_position should return MLR_OK");
-
-    // position[0] = (0.02/0.01) * (10000/100) = 200.0
-    ASSERT(fabs(position_out[0] - 200.0) < TOLERANCE, "position[0] should be 200.0");
-
-    // position[1] = (0.02/0.02) * (10000/100) = 100.0
-    ASSERT(fabs(position_out[1] - 100.0) < TOLERANCE, "position[1] should be 100.0");
-
-    printf("  PASS: mlr_vol_target_position as risk cap\n");
-    return 0;
+    ASSERT(mlr_vol_target_position(sigma, 0.02, 10000.0, price, 2.0, 2, out) == MLR_OK, "OK");
+    ASSERT_NEAR(out[0], 200.0, TOL, "(0.02/0.01)*(10000/100)");
+    ASSERT_NEAR(out[1], 100.0, TOL, "(0.02/0.02)*(10000/100)");
+    PASS("vol_target_position as risk cap");
 }
 
-static int test_sizing_invalid_inputs(void) {
+static int test_vol_target_position_invalid_inputs(void) {
     double sigma[] = {0.01};
     double price[] = {100.0};
-    double position_out[1];
-    
-    // NULL pointers
-    mlr_status status = mlr_vol_target_position(
-        NULL, 0.01, 10000.0, price, 2.0, 1, position_out
-    );
-    ASSERT(status == MLR_EINVAL, "mlr_vol_target_position with NULL sigma should return MLR_EINVAL");
-    
-    status = mlr_vol_target_position(
-        sigma, 0.01, 10000.0, NULL, 2.0, 1, position_out
-    );
-    ASSERT(status == MLR_EINVAL, "mlr_vol_target_position with NULL price should return MLR_EINVAL");
-    
-    // Invalid equity or leverage
-    status = mlr_vol_target_position(
-        sigma, 0.01, -1000.0, price, 2.0, 1, position_out
-    );
-    ASSERT(status == MLR_EINVAL, "mlr_vol_target_position with negative equity should return MLR_EINVAL");
-    
-    status = mlr_vol_target_position(
-        sigma, 0.01, 10000.0, price, -1.0, 1, position_out
-    );
-    ASSERT(status == MLR_EINVAL, "mlr_vol_target_position with negative leverage should return MLR_EINVAL");
+    double out[1];
 
-    // Invalid target_vol (previously produced uncapped short positions)
-    status = mlr_vol_target_position(
-        sigma, -0.01, 10000.0, price, 2.0, 1, position_out
-    );
-    ASSERT(status == MLR_EINVAL, "mlr_vol_target_position with negative target_vol should return MLR_EINVAL");
+    ASSERT(mlr_vol_target_position(NULL, 0.01, 1e4, price, 2.0, 1, out) == MLR_EINVAL, "NULL sigma");
+    ASSERT(mlr_vol_target_position(sigma, 0.01, 1e4, NULL, 2.0, 1, out) == MLR_EINVAL, "NULL price");
+    ASSERT(mlr_vol_target_position(sigma, 0.01, 1e4, price, 2.0, 1, NULL) == MLR_EINVAL, "NULL out");
+    ASSERT(mlr_vol_target_position(sigma, 0.01, 1e4, price, 2.0, 0, out) == MLR_EINVAL, "n=0");
 
-    status = mlr_vol_target_position(
-        sigma, 0.0, 10000.0, price, 2.0, 1, position_out
-    );
-    ASSERT(status == MLR_EINVAL, "mlr_vol_target_position with zero target_vol should return MLR_EINVAL");
+    ASSERT(mlr_vol_target_position(sigma, -0.01, 1e4, price, 2.0, 1, out) == MLR_EINVAL, "negative target_vol");
+    ASSERT(mlr_vol_target_position(sigma, 0.0, 1e4, price, 2.0, 1, out) == MLR_EINVAL, "zero target_vol");
+    ASSERT(mlr_vol_target_position(sigma, MLR_NAN, 1e4, price, 2.0, 1, out) == MLR_EINVAL, "NAN target_vol");
 
-    status = mlr_vol_target_position(
-        sigma, MLR_NAN, 10000.0, price, 2.0, 1, position_out
-    );
-    ASSERT(status == MLR_EINVAL, "mlr_vol_target_position with NaN target_vol should return MLR_EINVAL");
+    ASSERT(mlr_vol_target_position(sigma, 0.01, -1e3, price, 2.0, 1, out) == MLR_EINVAL, "negative equity");
+    ASSERT(mlr_vol_target_position(sigma, 0.01, MLR_NAN, price, 2.0, 1, out) == MLR_EINVAL, "NAN equity");
+    ASSERT(mlr_vol_target_position(sigma, 0.01, INFINITY, price, 2.0, 1, out) == MLR_EINVAL, "Inf equity");
 
-    printf("  PASS: sizing invalid inputs\n");
-    return 0;
+    ASSERT(mlr_vol_target_position(sigma, 0.01, 1e4, price, -1.0, 1, out) == MLR_EINVAL, "negative leverage");
+    ASSERT(mlr_vol_target_position(sigma, 0.01, 1e4, price, INFINITY, 1, out) == MLR_EINVAL, "Inf leverage");
+    ASSERT(mlr_vol_target_position(sigma, 0.01, 1e4, price, MLR_NAN, 1, out) == MLR_EINVAL, "NAN leverage");
+    PASS("vol_target_position invalid inputs");
 }
 
 static int test_kelly_fraction(void) {
@@ -181,30 +82,30 @@ static int test_kelly_fraction(void) {
     double returns[] = {0.1, -0.05, 0.1, -0.05};
     double f = 0.0;
 
-    mlr_status status = mlr_kelly_fraction(returns, 4, 1.0, &f);
-    ASSERT(status == MLR_OK, "kelly should return MLR_OK");
-    ASSERT(fabs(f - 10.0 / 3.0) < TOLERANCE, "full Kelly should be 10/3");
+    ASSERT(mlr_kelly_fraction(returns, 4, 1.0, &f) == MLR_OK, "kelly OK");
+    ASSERT_NEAR(f, 10.0 / 3.0, TOL, "full Kelly");
+    ASSERT(mlr_kelly_fraction(returns, 4, 0.5, &f) == MLR_OK, "half kelly OK");
+    ASSERT_NEAR(f, 5.0 / 3.0, TOL, "half Kelly");
 
-    status = mlr_kelly_fraction(returns, 4, 0.5, &f);
-    ASSERT(status == MLR_OK, "half kelly should return MLR_OK");
-    ASSERT(fabs(f - 5.0 / 3.0) < TOLERANCE, "half Kelly should be 5/3");
-
-    // Negative edge -> negative fraction
     double losing[] = {-0.1, 0.05, -0.1, 0.05};
-    status = mlr_kelly_fraction(losing, 4, 1.0, &f);
-    ASSERT(status == MLR_OK, "negative-edge kelly should return MLR_OK");
-    ASSERT(f < 0.0, "negative edge should give negative Kelly fraction");
+    ASSERT(mlr_kelly_fraction(losing, 4, 1.0, &f) == MLR_OK, "negative-edge kelly OK");
+    ASSERT_NEAR(f, -10.0 / 3.0, TOL, "negative edge gives negative fraction");
 
-    // Degenerate inputs
     double constant[] = {0.01, 0.01, 0.01};
-    ASSERT(mlr_kelly_fraction(constant, 3, 1.0, &f) == MLR_EDOMAIN,
-           "zero variance should return MLR_EDOMAIN");
-    ASSERT(mlr_kelly_fraction(returns, 1, 1.0, &f) == MLR_EINVAL, "n<2 -> MLR_EINVAL");
-    ASSERT(mlr_kelly_fraction(returns, 4, 0.0, &f) == MLR_EINVAL, "fraction=0 -> MLR_EINVAL");
-    ASSERT(mlr_kelly_fraction(NULL, 4, 1.0, &f) == MLR_EINVAL, "NULL returns -> MLR_EINVAL");
+    ASSERT(mlr_kelly_fraction(constant, 3, 1.0, &f) == MLR_EDOMAIN, "zero variance -> EDOMAIN");
+    ASSERT(mlr_kelly_fraction(returns, 1, 1.0, &f) == MLR_EINVAL, "n<2 -> EINVAL");
+    ASSERT(mlr_kelly_fraction(returns, 4, 0.0, &f) == MLR_EINVAL, "fraction=0 -> EINVAL");
+    ASSERT(mlr_kelly_fraction(returns, 4, MLR_NAN, &f) == MLR_EINVAL, "NAN fraction -> EINVAL");
+    ASSERT(mlr_kelly_fraction(NULL, 4, 1.0, &f) == MLR_EINVAL, "NULL returns -> EINVAL");
+    ASSERT(mlr_kelly_fraction(returns, 4, 1.0, NULL) == MLR_EINVAL, "NULL f_out -> EINVAL");
 
-    printf("  PASS: kelly fraction\n");
-    return 0;
+    double with_nan[] = {0.1, MLR_NAN, 0.1};
+    ASSERT(mlr_kelly_fraction(with_nan, 3, 1.0, &f) == MLR_EINVAL, "non-finite return -> EINVAL");
+
+    // Finite inputs whose sums overflow must not produce a NAN estimate
+    double huge[] = {1e308, 1e308, -1e308};
+    ASSERT(mlr_kelly_fraction(huge, 3, 1.0, &f) == MLR_EDOMAIN, "overflowing sums -> EDOMAIN");
+    PASS("kelly fraction");
 }
 
 static int test_drawdown_scale(void) {
@@ -212,40 +113,39 @@ static int test_drawdown_scale(void) {
     double equity[] = {100.0, 110.0, 99.0, 104.5, 120.0};
     double scale[5];
 
-    mlr_status status = mlr_drawdown_scale(equity, 5, 0.2, scale);
-    ASSERT(status == MLR_OK, "drawdown_scale should return MLR_OK");
-    ASSERT(fabs(scale[0] - 1.0) < TOLERANCE, "scale[0] should be 1");
-    ASSERT(fabs(scale[1] - 1.0) < TOLERANCE, "scale[1] should be 1");
-    ASSERT(fabs(scale[2] - 0.5) < TOLERANCE, "scale[2] should be 0.5 (10% dd of 20% cap)");
-    ASSERT(fabs(scale[3] - 0.75) < TOLERANCE, "scale[3] should be 0.75");
-    ASSERT(fabs(scale[4] - 1.0) < TOLERANCE, "scale[4] should be 1 (new peak)");
+    ASSERT(mlr_drawdown_scale(equity, 5, 0.2, scale) == MLR_OK, "drawdown_scale OK");
+    ASSERT_NEAR(scale[0], 1.0, TOL, "no drawdown at start");
+    ASSERT_NEAR(scale[1], 1.0, TOL, "no drawdown at new peak");
+    ASSERT_NEAR(scale[2], 0.5, TOL, "10% drawdown of a 20% cap");
+    ASSERT_NEAR(scale[3], 0.75, TOL, "5% drawdown of a 20% cap");
+    ASSERT_NEAR(scale[4], 1.0, TOL, "new peak");
 
-    // Drawdown beyond max_dd clamps to zero exposure
     double crash[] = {100.0, 50.0};
-    status = mlr_drawdown_scale(crash, 2, 0.2, scale);
-    ASSERT(status == MLR_OK, "crash path should return MLR_OK");
-    ASSERT(scale[1] == 0.0, "drawdown past max_dd should scale to 0");
+    ASSERT(mlr_drawdown_scale(crash, 2, 0.2, scale) == MLR_OK, "crash path OK");
+    ASSERT(scale[1] == 0.0, "drawdown past max_dd scales to 0");
 
-    // Invalid parameters
-    ASSERT(mlr_drawdown_scale(equity, 5, 0.0, scale) == MLR_EINVAL, "max_dd=0 -> MLR_EINVAL");
-    ASSERT(mlr_drawdown_scale(equity, 5, 1.5, scale) == MLR_EINVAL, "max_dd>1 -> MLR_EINVAL");
+    ASSERT(mlr_drawdown_scale(equity, 5, 0.0, scale) == MLR_EINVAL, "max_dd=0 -> EINVAL");
+    ASSERT(mlr_drawdown_scale(equity, 5, 1.5, scale) == MLR_EINVAL, "max_dd>1 -> EINVAL");
+    ASSERT(mlr_drawdown_scale(equity, 5, MLR_NAN, scale) == MLR_EINVAL, "NAN max_dd -> EINVAL");
+    ASSERT(mlr_drawdown_scale(equity, 0, 0.2, scale) == MLR_EINVAL, "n=0 -> EINVAL");
+    ASSERT(mlr_drawdown_scale(NULL, 5, 0.2, scale) == MLR_EINVAL, "NULL equity -> EINVAL");
+    ASSERT(mlr_drawdown_scale(equity, 5, 0.2, NULL) == MLR_EINVAL, "NULL scale_out -> EINVAL");
+
     double bad[] = {100.0, 0.0};
-    ASSERT(mlr_drawdown_scale(bad, 2, 0.2, scale) == MLR_EDOMAIN,
-           "non-positive equity -> MLR_EDOMAIN");
-
-    printf("  PASS: drawdown scale\n");
-    return 0;
+    ASSERT(mlr_drawdown_scale(bad, 2, 0.2, scale) == MLR_EDOMAIN, "non-positive equity -> EDOMAIN");
+    bad[1] = MLR_NAN;
+    ASSERT(mlr_drawdown_scale(bad, 2, 0.2, scale) == MLR_EDOMAIN, "NAN equity -> EDOMAIN");
+    PASS("drawdown scale");
 }
 
 int test_sizing(void) {
     int failures = 0;
+    failures += test_vol_target_position_basic();
+    failures += test_vol_target_position_bad_sigma_or_price();
+    failures += test_vol_target_position_leverage_cap();
+    failures += test_vol_target_position_as_risk_cap();
+    failures += test_vol_target_position_invalid_inputs();
     failures += test_kelly_fraction();
     failures += test_drawdown_scale();
-    failures += test_vol_target_position_basic();
-    failures += test_vol_target_position_nan_sigma();
-    failures += test_vol_target_position_leverage_cap();
-    failures += test_vol_target_position_decreasing_with_sigma();
-    failures += test_vol_target_position_as_risk_cap();
-    failures += test_sizing_invalid_inputs();
     return failures;
 }

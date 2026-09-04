@@ -1,84 +1,28 @@
-# Build directories
+# Build
 build/
+build-*/
 out/
 cmake-build-*/
-
-# CMake generated files
 CMakeCache.txt
 CMakeFiles/
-CMakeScripts/
 Testing/
-Makefile
-cmake_install.cmake
-install_manifest.txt
 compile_commands.json
-CTestTestfile.cmake
-_deps/
 
-# Visual Studio files
-*.vcxproj
-*.vcxproj.filters
-*.vcxproj.user
-*.sln
-*.slnx
-*.suo
-*.user
-*.userosscache
-*.sln.docstates
-*.dir/
-*.tlog
-*.lastbuildstate
-*.ilk
-*.pdb
-*.obj
-*.exe
-*.lib
-*.dll
-*.exp
-*.iobj
-*.ipdb
-x64/
-x86/
-Win32/
-.vs/
-
-# Compiled binaries
-*.exe
-*.out
-*.app
-*.dylib
-*.so
-*.a
-*.lib
-*.dll
-
-# Object files
+# Compiled
 *.o
 *.obj
-*.ko
-*.elf
-
-# Debug files
-*.dSYM/
-*.su
-*.idb
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
 *.pdb
-*.ilk
+*.dSYM/
 
-# IDE files
+# IDE / OS
 .vscode/
 .idea/
+.vs/
 *.swp
-*.swo
-*~
 .DS_Store
-
-# Logs
-*.log
-*.tlog
-
-# Temporary files
-*.tmp
-*.temp
-*.bak
-*.cache

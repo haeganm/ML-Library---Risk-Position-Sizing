@@ -1,163 +1,65 @@
 #include "mlrisk/rolling.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <string.h>
+#include "test_util.h"
 
-#define ASSERT(cond, msg) do { \
-    if (!(cond)) { \
-        printf("  FAIL: %s\n", msg); \
-        return 1; \
-    } \
-} while (0)
-
-#define TOLERANCE 1e-9
+#define TOL 1e-9
 
 static int test_rolling_mean_basic(void) {
     double x[] = {1.0, 2.0, 3.0, 4.0, 5.0};
     double out[5];
-    
-    mlr_status status = mlr_rolling_mean(x, 5, 3, out);
-    ASSERT(status == MLR_OK, "mlr_rolling_mean should return MLR_OK");
-    
-    // First two should be NAN
-    ASSERT(mlr_isnan(out[0]), "out[0] should be NAN");
-    ASSERT(mlr_isnan(out[1]), "out[1] should be NAN");
-    
-    // out[2] = mean of [1,2,3] = 2.0
-    ASSERT(fabs(out[2] - 2.0) < TOLERANCE, "out[2] should be 2.0");
-    
-    // out[3] = mean of [2,3,4] = 3.0
-    ASSERT(fabs(out[3] - 3.0) < TOLERANCE, "out[3] should be 3.0");
-    
-    // out[4] = mean of [3,4,5] = 4.0
-    ASSERT(fabs(out[4] - 4.0) < TOLERANCE, "out[4] should be 4.0");
-    
-    printf("  PASS: mlr_rolling_mean basic\n");
-    return 0;
+
+    ASSERT(mlr_rolling_mean(x, 5, 3, out) == MLR_OK, "rolling_mean returns MLR_OK");
+    ASSERT(mlr_isnan(out[0]) && mlr_isnan(out[1]), "warmup is NAN");
+    ASSERT_NEAR(out[2], 2.0, TOL, "mean of [1,2,3]");
+    ASSERT_NEAR(out[3], 3.0, TOL, "mean of [2,3,4]");
+    ASSERT_NEAR(out[4], 4.0, TOL, "mean of [3,4,5]");
+    PASS("rolling_mean basic");
 }
 
 static int test_rolling_mean_edge_cases(void) {
     double x[] = {1.0};
     double out[1];
-    
-    // Window = 1 should work
-    mlr_status status = mlr_rolling_mean(x, 1, 1, out);
-    ASSERT(status == MLR_OK, "mlr_rolling_mean with window=1 should work");
-    ASSERT(fabs(out[0] - 1.0) < TOLERANCE, "out[0] should be 1.0");
-    
-    // Window > n should set all to NAN
-    status = mlr_rolling_mean(x, 1, 5, out);
-    ASSERT(status == MLR_OK, "mlr_rolling_mean with window>n should return OK");
-    ASSERT(mlr_isnan(out[0]), "out[0] should be NAN when window>n");
-    
-    // NULL pointers
-    status = mlr_rolling_mean(NULL, 1, 1, out);
-    ASSERT(status == MLR_EINVAL, "mlr_rolling_mean with NULL x should return MLR_EINVAL");
-    
-    status = mlr_rolling_mean(x, 1, 1, NULL);
-    ASSERT(status == MLR_EINVAL, "mlr_rolling_mean with NULL out should return MLR_EINVAL");
-    
-    // Zero window
-    status = mlr_rolling_mean(x, 1, 0, out);
-    ASSERT(status == MLR_EINVAL, "mlr_rolling_mean with window=0 should return MLR_EINVAL");
-    
-    printf("  PASS: mlr_rolling_mean edge cases\n");
-    return 0;
+
+    ASSERT(mlr_rolling_mean(x, 1, 1, out) == MLR_OK, "window=1 OK");
+    ASSERT_NEAR(out[0], 1.0, TOL, "window=1 mean is the value");
+
+    ASSERT(mlr_rolling_mean(x, 1, 5, out) == MLR_OK, "window>n OK");
+    ASSERT(mlr_isnan(out[0]), "window>n gives NAN");
+
+    ASSERT(mlr_rolling_mean(NULL, 1, 1, out) == MLR_EINVAL, "NULL x -> EINVAL");
+    ASSERT(mlr_rolling_mean(x, 1, 1, NULL) == MLR_EINVAL, "NULL out -> EINVAL");
+    ASSERT(mlr_rolling_mean(x, 0, 1, out) == MLR_EINVAL, "n=0 -> EINVAL");
+    ASSERT(mlr_rolling_mean(x, 1, 0, out) == MLR_EINVAL, "window=0 -> EINVAL");
+    ASSERT(mlr_rolling_std(x, 0, 1, out) == MLR_EINVAL, "std n=0 -> EINVAL");
+    ASSERT(mlr_rolling_std(NULL, 1, 1, out) == MLR_EINVAL, "std NULL x -> EINVAL");
+    PASS("rolling_mean edge cases");
 }
 
 static int test_rolling_std_basic(void) {
     double x[] = {1.0, 2.0, 3.0, 4.0, 5.0};
     double out[5];
-    
-    mlr_status status = mlr_rolling_std(x, 5, 3, out);
-    ASSERT(status == MLR_OK, "mlr_rolling_std should return MLR_OK");
-    
-    // First two should be NAN
-    ASSERT(mlr_isnan(out[0]), "out[0] should be NAN");
-    ASSERT(mlr_isnan(out[1]), "out[1] should be NAN");
-    
-    // out[2] = std of [1,2,3]
-    // mean = 2.0, variance = ((1-2)^2 + (2-2)^2 + (3-2)^2)/3 = 2/3
-    // std = sqrt(2/3) ≈ 0.8165
-    double expected = sqrt(2.0 / 3.0);
-    ASSERT(fabs(out[2] - expected) < TOLERANCE, "out[2] should match expected std");
-    
-    printf("  PASS: mlr_rolling_std basic\n");
-    return 0;
+
+    ASSERT(mlr_rolling_std(x, 5, 3, out) == MLR_OK, "rolling_std returns MLR_OK");
+    ASSERT(mlr_isnan(out[0]) && mlr_isnan(out[1]), "warmup is NAN");
+    // population variance of [1,2,3] = 2/3
+    ASSERT_NEAR(out[2], sqrt(2.0 / 3.0), TOL, "std of [1,2,3]");
+    ASSERT_NEAR(out[4], sqrt(2.0 / 3.0), TOL, "std of [3,4,5]");
+    PASS("rolling_std basic");
 }
 
-static int test_ewma_vol_basic(void) {
-    double returns[] = {0.01, -0.02, 0.015, -0.01, 0.02};
-    double out[5];
-    double lambda = 0.94;
-    
-    mlr_status status = mlr_ewma_vol(returns, 5, lambda, out);
-    ASSERT(status == MLR_OK, "mlr_ewma_vol should return MLR_OK");
-    
-    // First value should be |returns[0]|
-    ASSERT(fabs(out[0] - fabs(returns[0])) < TOLERANCE, "out[0] should be |returns[0]|");
-    
-    // Subsequent values should be positive
-    for (size_t i = 1; i < 5; i++) {
-        ASSERT(out[i] > 0.0, "EWMA vol should be positive");
+// Two-pass population statistics over x[lo..hi], the reference the O(n)
+// algorithms are checked against
+static void naive_stats(const double *x, size_t lo, size_t hi, double *mean_out, double *std_out) {
+    double mean = 0.0;
+    for (size_t j = lo; j <= hi; j++) mean += x[j];
+    mean /= (double)(hi - lo + 1);
+    double var = 0.0;
+    for (size_t j = lo; j <= hi; j++) {
+        double d = x[j] - mean;
+        var += d * d;
     }
-    
-    printf("  PASS: mlr_ewma_vol basic\n");
-    return 0;
-}
-
-static int test_ewma_vol_regime_change(void) {
-    // Create synthetic data: low vol then high vol
-    double returns[100];
-    for (size_t i = 0; i < 50; i++) {
-        returns[i] = 0.001 * ((double)rand() / RAND_MAX - 0.5); // Low vol
-    }
-    for (size_t i = 50; i < 100; i++) {
-        returns[i] = 0.01 * ((double)rand() / RAND_MAX - 0.5); // High vol
-    }
-    
-    double out[100];
-    double lambda = 0.94;
-    
-    mlr_status status = mlr_ewma_vol(returns, 100, lambda, out);
-    ASSERT(status == MLR_OK, "mlr_ewma_vol should return MLR_OK");
-    
-    // Volatility should increase after regime change
-    double avg_early = 0.0, avg_late = 0.0;
-    for (size_t i = 10; i < 50; i++) {
-        avg_early += out[i];
-    }
-    for (size_t i = 60; i < 100; i++) {
-        avg_late += out[i];
-    }
-    avg_early /= 40.0;
-    avg_late /= 40.0;
-    
-    ASSERT(avg_late > avg_early, "EWMA should detect regime change");
-    
-    printf("  PASS: mlr_ewma_vol regime change\n");
-    return 0;
-}
-
-static int test_ewma_vol_invalid_lambda(void) {
-    double returns[] = {0.01};
-    double out[1];
-    
-    mlr_status status = mlr_ewma_vol(returns, 1, -0.1, out);
-    ASSERT(status == MLR_EINVAL, "mlr_ewma_vol with negative lambda should return MLR_EINVAL");
-    
-    status = mlr_ewma_vol(returns, 1, 1.5, out);
-    ASSERT(status == MLR_EINVAL, "mlr_ewma_vol with lambda>1 should return MLR_EINVAL");
-    
-    printf("  PASS: mlr_ewma_vol invalid lambda\n");
-    return 0;
-}
-
-// Deterministic LCG so results are identical on every platform
-static double lcg_next(unsigned long long *state) {
-    *state = *state * 6364136223846793005ULL + 1442695040888963407ULL;
-    return ((double)(*state >> 11) / 9007199254740992.0) - 0.5;
+    var /= (double)(hi - lo + 1);
+    *mean_out = mean;
+    *std_out = sqrt(var);
 }
 
 static int test_rolling_sliding_consistency(void) {
@@ -165,7 +67,7 @@ static int test_rolling_sliding_consistency(void) {
     static double x[N], fast_mean[N], fast_std[N];
     unsigned long long state = 42;
     for (size_t i = 0; i < N; i++) {
-        x[i] = lcg_next(&state) * 0.05;
+        x[i] = (test_lcg_u01(&state) - 0.5) * 0.05;
     }
 
     size_t windows[] = {2, 5, 50};
@@ -173,90 +75,68 @@ static int test_rolling_sliding_consistency(void) {
         size_t w = windows[wi];
         ASSERT(mlr_rolling_mean(x, N, w, fast_mean) == MLR_OK, "sliding mean OK");
         ASSERT(mlr_rolling_std(x, N, w, fast_std) == MLR_OK, "sliding std OK");
-
         for (size_t i = w - 1; i < N; i++) {
-            double mean = 0.0;
-            for (size_t j = i - w + 1; j <= i; j++) mean += x[j];
-            mean /= (double)w;
-
-            double var = 0.0;
-            for (size_t j = i - w + 1; j <= i; j++) {
-                double d = x[j] - mean;
-                var += d * d;
-            }
-            var /= (double)w;
-
-            ASSERT(fabs(fast_mean[i] - mean) < TOLERANCE, "sliding mean matches naive recompute");
-            ASSERT(fabs(fast_std[i] - sqrt(var)) < TOLERANCE, "sliding std matches naive recompute");
+            double mean, sd;
+            naive_stats(x, i - w + 1, i, &mean, &sd);
+            ASSERT_NEAR(fast_mean[i], mean, TOL, "sliding mean matches two-pass");
+            ASSERT_NEAR(fast_std[i], sd, TOL, "sliding std matches two-pass");
         }
     }
-
-    printf("  PASS: sliding algorithms match naive recompute\n");
-    return 0;
+    PASS("sliding algorithms match two-pass recompute");
 }
 
 static int test_rolling_std_edge_cases(void) {
     double constant[10] = {3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5};
     double out[10];
 
-    // Constant input: variance must clamp to exactly 0
     ASSERT(mlr_rolling_std(constant, 10, 4, out) == MLR_OK, "constant std OK");
     for (size_t i = 3; i < 10; i++) {
-        ASSERT(out[i] == 0.0, "std of constant array should be exactly 0");
+        ASSERT(out[i] == 0.0, "std of a constant is exactly 0");
     }
 
-    // window > n: all NAN
     ASSERT(mlr_rolling_std(constant, 3, 5, out) == MLR_OK, "window>n std OK");
     for (size_t i = 0; i < 3; i++) {
-        ASSERT(mlr_isnan(out[i]), "std should be NAN when window>n");
+        ASSERT(mlr_isnan(out[i]), "window>n std is NAN");
     }
 
-    // window == 1: zeros
     ASSERT(mlr_rolling_std(constant, 3, 1, out) == MLR_OK, "window=1 std OK");
-    ASSERT(out[0] == 0.0 && out[2] == 0.0, "std with window=1 should be 0");
-
-    printf("  PASS: mlr_rolling_std edge cases\n");
-    return 0;
+    ASSERT(out[0] == 0.0 && out[2] == 0.0, "window=1 std is 0");
+    PASS("rolling_std edge cases");
 }
 
 static int test_rolling_shift_invariance(void) {
-    // Std is shift-invariant and mean shifts exactly; a large common level
-    // (prices, index values) must not destroy precision
+    // A series at level 1e9 with unit-scale variation. The two-pass
+    // reference on the same data isolates the algorithm from the input
+    // representation, so the sliding result must match it tightly; without
+    // offset shifting the rolling Welford removal step loses ~6 digits here.
     enum { N = 500, W = 20 };
-    static double base[N], shifted[N], std_base[N], std_shifted[N];
-    static double mean_base[N], mean_shifted[N];
+    static double shifted[N], std_out[N], mean_out[N];
     const double OFFSET = 1e9;
 
     unsigned long long state = 777;
     for (size_t i = 0; i < N; i++) {
-        base[i] = lcg_next(&state);
-        shifted[i] = base[i] + OFFSET;
+        shifted[i] = OFFSET + (test_lcg_u01(&state) - 0.5);
     }
 
-    ASSERT(mlr_rolling_std(base, N, W, std_base) == MLR_OK, "base std OK");
-    ASSERT(mlr_rolling_std(shifted, N, W, std_shifted) == MLR_OK, "shifted std OK");
-    ASSERT(mlr_rolling_mean(base, N, W, mean_base) == MLR_OK, "base mean OK");
-    ASSERT(mlr_rolling_mean(shifted, N, W, mean_shifted) == MLR_OK, "shifted mean OK");
+    ASSERT(mlr_rolling_std(shifted, N, W, std_out) == MLR_OK, "shifted std OK");
+    ASSERT(mlr_rolling_mean(shifted, N, W, mean_out) == MLR_OK, "shifted mean OK");
 
     for (size_t i = W - 1; i < N; i++) {
-        ASSERT(fabs(std_shifted[i] - std_base[i]) < 1e-6,
-               "std should be invariant under a 1e9 level shift");
-        ASSERT(fabs((mean_shifted[i] - OFFSET) - mean_base[i]) < 1e-6,
-               "mean should shift exactly under a 1e9 level shift");
+        double mean, sd;
+        naive_stats(shifted, i - W + 1, i, &mean, &sd);
+        ASSERT_NEAR(std_out[i], sd, 1e-12, "std at level 1e9 matches two-pass to 1e-12");
+        ASSERT_NEAR(mean_out[i], mean, 1e-6, "mean at level 1e9 matches two-pass");
     }
-
-    printf("  PASS: shift invariance at offset 1e9\n");
-    return 0;
+    PASS("shift invariance at level 1e9");
 }
 
 static int test_rolling_nan_recovery(void) {
-    // A NaN (missing data) must only affect windows containing it - the
-    // sliding accumulators must recover once it leaves the window
+    // A bad value affects only the windows containing it
     enum { N = 20, W = 3 };
     double x[N], mean_out[N], std_out[N];
     unsigned long long state = 4242;
     for (size_t i = 0; i < N; i++) {
-        x[i] = lcg_next(&state);
+        x[i] = test_lcg_u01(&state) - 0.5;
     }
     x[7] = MLR_NAN;
     x[13] = INFINITY;
@@ -265,38 +145,82 @@ static int test_rolling_nan_recovery(void) {
     ASSERT(mlr_rolling_std(x, N, W, std_out) == MLR_OK, "std with NaN OK");
 
     for (size_t i = W - 1; i < N; i++) {
-        // Window [i-W+1, i] contains a bad value?
         int has_bad = 0;
         for (size_t j = i - W + 1; j <= i; j++) {
             if (!mlr_isfinite(x[j])) has_bad = 1;
         }
-
         if (has_bad) {
-            ASSERT(mlr_isnan(mean_out[i]), "mean of window with bad value should be NAN");
-            ASSERT(mlr_isnan(std_out[i]), "std of window with bad value should be NAN");
+            ASSERT(mlr_isnan(mean_out[i]), "window with bad value gives NAN mean");
+            ASSERT(mlr_isnan(std_out[i]), "window with bad value gives NAN std");
         } else {
-            // Compare against naive recompute
-            double mean = 0.0;
-            for (size_t j = i - W + 1; j <= i; j++) mean += x[j];
-            mean /= (double)W;
-            double var = 0.0;
-            for (size_t j = i - W + 1; j <= i; j++) {
-                double d = x[j] - mean;
-                var += d * d;
-            }
-            var /= (double)W;
-            ASSERT(fabs(mean_out[i] - mean) < TOLERANCE, "mean should recover after bad value");
-            ASSERT(fabs(std_out[i] - sqrt(var)) < TOLERANCE, "std should recover after bad value");
+            double mean, sd;
+            naive_stats(x, i - W + 1, i, &mean, &sd);
+            ASSERT_NEAR(mean_out[i], mean, TOL, "mean recovers after bad value");
+            ASSERT_NEAR(std_out[i], sd, TOL, "std recovers after bad value");
         }
     }
 
-    // window == 1: NaN in, NaN out; finite in, 0 out
     ASSERT(mlr_rolling_std(x, N, 1, std_out) == MLR_OK, "window=1 with NaN OK");
-    ASSERT(mlr_isnan(std_out[7]), "window=1 std of NaN should be NAN");
-    ASSERT(std_out[8] == 0.0, "window=1 std of finite value should be 0");
+    ASSERT(mlr_isnan(std_out[7]), "window=1 std of NaN is NAN");
+    ASSERT(std_out[8] == 0.0, "window=1 std of a finite value is 0");
+    PASS("NaN recovery");
+}
 
-    printf("  PASS: NaN recovery\n");
-    return 0;
+static int test_ewma_vol_known_answer(void) {
+    // Predictive: out[t] uses returns[0..t-1]
+    double returns[] = {0.01, -0.02, 0.015};
+    double out[3];
+    double lambda = 0.9;
+
+    ASSERT(mlr_ewma_vol(returns, 3, lambda, out) == MLR_OK, "ewma returns MLR_OK");
+    ASSERT(mlr_isnan(out[0]), "no forecast before the first return");
+    ASSERT_NEAR(out[1], 0.01, TOL, "out[1] = |r[0]|");
+    double var = lambda * 0.01 * 0.01 + (1.0 - lambda) * 0.02 * 0.02;
+    ASSERT_NEAR(out[2], sqrt(var), TOL, "out[2] from r[0], r[1] only");
+
+    // lambda = 0: out[t] = |r[t-1]|
+    ASSERT(mlr_ewma_vol(returns, 3, 0.0, out) == MLR_OK, "lambda=0 OK");
+    ASSERT_NEAR(out[2], 0.02, TOL, "lambda=0 gives |r[t-1]|");
+    PASS("ewma_vol known answer");
+}
+
+static int test_ewma_vol_invalid_inputs(void) {
+    double returns[] = {0.01};
+    double out[1];
+
+    ASSERT(mlr_ewma_vol(returns, 1, -0.1, out) == MLR_EINVAL, "negative lambda -> EINVAL");
+    ASSERT(mlr_ewma_vol(returns, 1, 1.0, out) == MLR_EINVAL, "lambda=1 (frozen) -> EINVAL");
+    ASSERT(mlr_ewma_vol(returns, 1, 1.5, out) == MLR_EINVAL, "lambda>1 -> EINVAL");
+    ASSERT(mlr_ewma_vol(returns, 1, MLR_NAN, out) == MLR_EINVAL, "NAN lambda -> EINVAL");
+    ASSERT(mlr_ewma_vol(NULL, 1, 0.9, out) == MLR_EINVAL, "NULL returns -> EINVAL");
+    ASSERT(mlr_ewma_vol(returns, 1, 0.9, NULL) == MLR_EINVAL, "NULL out -> EINVAL");
+    ASSERT(mlr_ewma_vol(returns, 0, 0.9, out) == MLR_EINVAL, "n=0 -> EINVAL");
+    PASS("ewma_vol invalid inputs");
+}
+
+static int test_ewma_vol_missing_data(void) {
+    // Leading NANs are skipped, the first finite return seeds the variance,
+    // an interior NAN neither changes the forecast already made nor the state
+    double returns[] = {MLR_NAN, 0.02, MLR_NAN, 0.01, 0.03};
+    double out[5];
+    double lambda = 0.9;
+
+    ASSERT(mlr_ewma_vol(returns, 5, lambda, out) == MLR_OK, "ewma with NANs OK");
+    ASSERT(mlr_isnan(out[0]) && mlr_isnan(out[1]), "no forecast until a return is seen");
+    ASSERT_NEAR(out[2], 0.02, TOL, "forecast after the seed is |r[1]|");
+    ASSERT_NEAR(out[3], 0.02, TOL, "missing r[2] leaves the state unchanged");
+    double var = lambda * 0.02 * 0.02 + (1.0 - lambda) * 0.01 * 0.01;
+    ASSERT_NEAR(out[4], sqrt(var), TOL, "recursion resumes after the gap");
+
+    // A return whose square overflows is treated as missing
+    double huge[] = {0.01, 1e200, 0.01};
+    ASSERT(mlr_ewma_vol(huge, 3, lambda, out) == MLR_OK, "overflowing return OK");
+    ASSERT_NEAR(out[2], 0.01, TOL, "overflowing return does not poison the state");
+
+    double all_nan[] = {MLR_NAN, MLR_NAN};
+    ASSERT(mlr_ewma_vol(all_nan, 2, lambda, out) == MLR_OK, "all-NAN input OK");
+    ASSERT(mlr_isnan(out[0]) && mlr_isnan(out[1]), "all-NAN input gives all NAN");
+    PASS("ewma_vol missing data");
 }
 
 int test_rolling(void) {
@@ -308,8 +232,8 @@ int test_rolling(void) {
     failures += test_rolling_std_edge_cases();
     failures += test_rolling_shift_invariance();
     failures += test_rolling_nan_recovery();
-    failures += test_ewma_vol_basic();
-    failures += test_ewma_vol_regime_change();
-    failures += test_ewma_vol_invalid_lambda();
+    failures += test_ewma_vol_known_answer();
+    failures += test_ewma_vol_invalid_inputs();
+    failures += test_ewma_vol_missing_data();
     return failures;
 }

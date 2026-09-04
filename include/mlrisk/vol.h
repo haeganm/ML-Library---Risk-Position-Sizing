@@ -8,12 +8,15 @@
  * @file vol.h
  * @brief Volatility estimators: GARCH(1,1) and range-based (Parkinson, Garman-Klass)
  *
- * All outputs are per-period volatility (sigma), matching the rest of the
- * library. See the EWMA estimator in rolling.h.
+ * All outputs are per-period volatility (sigma). See EWMA in rolling.h.
  *
- * Note on range estimators: with discretely sampled bars they carry a small
- * downward bias (the observed high/low understate the continuous extremes);
- * expect readings a few percent below true volatility on e.g. 390-tick bars.
+ * Timing: the GARCH filter is predictive, sigma_out[t] is the forecast for
+ * period t made from returns[0..t-1]. The range estimators are per-bar and
+ * contemporaneous, out[t] is measured from bar t itself, so lag them one bar
+ * before using them to size a position held over bar t.
+ *
+ * Range estimators carry a small downward bias on discretely sampled bars
+ * (the observed high/low understate the continuous extremes).
  */
 
 #ifdef __cplusplus
@@ -21,47 +24,70 @@ extern "C" {
 #endif
 
 /**
- * @brief GARCH(1,1) model: sigma2[t] = omega + alpha*r[t-1]^2 + beta*sigma2[t-1]
+ * @brief GARCH(1,1): sigma2[t] = omega + alpha*r[t-1]^2 + beta*sigma2[t-1]
  *
- * Returns are assumed mean-zero (standard for financial returns at daily or
- * higher frequency). The variance recursion is seeded with the mean of
- * squared returns.
+ * Returns are assumed mean-zero. The recursion starts from a pre-sample
+ * variance ("backcast"): sigma2[0] = omega + (alpha + beta) * backcast, the
+ * same presample rule as the Python `arch` package. mlr_garch_fit uses the
+ * plain mean of squared returns over the fit sample as the backcast and
+ * records it in the model, so filtering later data never has to look at the
+ * data being filtered. The plain mean is not outlier-robust: one bad tick in
+ * the fit sample inflates the stored backcast for every later filter call.
  */
 typedef struct {
-    double omega;        /**< Constant term (> 0) */
+    double omega;        /**< Constant term (finite, > 0) */
     double alpha;        /**< ARCH coefficient (>= 0) */
     double beta;         /**< GARCH coefficient (>= 0, alpha + beta < 1) */
     double sigma2_next;  /**< One-step-ahead conditional variance after the fit sample */
     double loglik;       /**< Maximized Gaussian log-likelihood (constants dropped) */
-    int converged;       /**< 1 if the optimizer converged, 0 = best-effort result */
+    int converged;       /**< 1 if the optimizer met its tolerances, 0 = iteration cap.
+                              Says nothing about whether the model is identified. */
+    double backcast;     /**< Pre-sample variance the recursion starts from; the fit
+                              stores mean(r^2). 0 = the unconditional variance
+                              omega / (1 - alpha - beta) */
 } mlr_garch;
 
 /**
  * @brief Fit GARCH(1,1) by Gaussian maximum likelihood
  *
- * Dependency-free MLE: a coarse feasible grid seeds a Nelder-Mead refinement.
- * Non-convergence is not an error - the best point found is returned with
- * converged == 0.
+ * A coarse feasible grid seeds a Nelder-Mead refinement. Non-convergence is
+ * not an error: the best point found is returned with converged == 0.
+ * Estimates are invariant to the scale of the returns.
+ *
+ * Three parameters need a few hundred observations to be identified; with
+ * short samples the optimizer converges to whatever the flat likelihood
+ * allows (typically a near-unit-root model) and reports converged == 1.
  *
  * @param returns Mean-zero returns (length n, all finite)
- * @param n Number of returns (must be >= 20)
+ * @param n Number of returns (must be >= 100)
  * @param model_out Fitted model
- * @return MLR_OK on success, MLR_EINVAL on invalid input,
- *         MLR_EDOMAIN if returns have zero variance
+ * @return MLR_OK on success, MLR_EINVAL on invalid input, MLR_EDOMAIN if the
+ *         returns have zero or non-finite variance
  */
 mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out);
 
 /**
- * @brief In-sample conditional volatility path
+ * @brief Conditional volatility path under a fixed model
  *
- * sigma2[0] = mean of squared returns, then the GARCH recursion;
- * sigma_out[t] = sqrt(sigma2[t]).
+ * sigma2[0] = omega + (alpha + beta) * backcast (a backcast of 0 means the
+ * unconditional variance, which is a fixed point of the recursion), then
+ * the GARCH recursion; sigma_out[t] = sqrt(sigma2[t]).
+ *
+ * The seed comes from the model, never from the returns being filtered, so
+ * sigma_out[t] depends only on returns[0..t-1]: filtering a prefix of a
+ * series gives exactly the prefix of the full filter, and filtering the fit
+ * sample ends at sigma2_next.
+ *
+ * A non-finite return (missing data) does not affect sigma_out[t], which
+ * was already determined; the recursion substitutes the conditional
+ * expectation of r[t]^2 (the current variance) and carries on.
  *
  * @param model Fitted (or manually constructed) model
  * @param returns Mean-zero returns (length n)
  * @param n Number of returns
  * @param sigma_out Output per-period sigma (length n, pre-allocated)
  * @return MLR_OK on success, MLR_EINVAL on invalid input or parameters
+ *         (including a negative or non-finite backcast)
  */
 mlr_status mlr_garch_filter(const mlr_garch *model, const double *returns, size_t n,
                             double *sigma_out);
@@ -85,8 +111,8 @@ mlr_status mlr_garch_forecast(const mlr_garch *model, size_t horizon, double *si
  *
  * sigma[i] = sqrt( ln(high[i]/low[i])^2 / (4 ln 2) )
  *
- * Bad bars (non-finite, <= 0, or high < low) produce out[i] = MLR_NAN;
- * the call still returns MLR_OK.
+ * Bad bars (non-finite, <= 0, high < low, or a ratio that overflows)
+ * produce out[i] = MLR_NAN; the call still returns MLR_OK.
  *
  * @param high High prices (length n)
  * @param low Low prices (length n)
@@ -101,9 +127,9 @@ mlr_status mlr_parkinson_vol(const double *high, const double *low, size_t n, do
  *
  * sigma2[i] = 0.5 * ln(high/low)^2 - (2 ln 2 - 1) * ln(close/open)^2
  *
- * Bad bars (non-finite, <= 0, or high < low) produce out[i] = MLR_NAN, as do
- * bars where the estimator goes negative (a known Garman-Klass artifact);
- * the call still returns MLR_OK.
+ * Bad bars (non-finite, <= 0, high < low, or a ratio that overflows) produce
+ * out[i] = MLR_NAN, as do bars where the estimator goes negative (a known
+ * Garman-Klass artifact); the call still returns MLR_OK.
  *
  * @param open Open prices (length n)
  * @param high High prices (length n)

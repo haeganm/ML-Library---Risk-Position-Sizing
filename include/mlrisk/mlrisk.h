@@ -3,11 +3,10 @@
 
 /**
  * @file mlrisk.h
- * @brief Umbrella header for mlrisk library
- * 
- * Include this header to access all public mlrisk APIs.
+ * @brief Umbrella header for the mlrisk library
  */
 
+#include "mlrisk/version.h"
 #include "mlrisk/types.h"
 #include "mlrisk/rolling.h"
 #include "mlrisk/vol.h"

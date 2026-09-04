@@ -2,8 +2,8 @@
 #include <math.h>
 
 // Reference level for offset-shifted accumulation: the first finite value.
-// Shifting keeps precision when the series has a large common level
-// (prices, index values); variance is shift-invariant and the mean shifts back.
+// Variance is shift-invariant and the mean shifts back, so subtracting a
+// common level keeps precision when the series sits far from zero.
 static double first_finite(const double *x, size_t n) {
     for (size_t i = 0; i < n; i++) {
         if (mlr_isfinite(x[i])) {
@@ -14,14 +14,10 @@ static double first_finite(const double *x, size_t n) {
 }
 
 mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *out) {
-    if (x == NULL || out == NULL) {
-        return MLR_EINVAL;
-    }
-    if (n == 0 || window == 0) {
+    if (x == NULL || out == NULL || n == 0 || window == 0) {
         return MLR_EINVAL;
     }
 
-    // Warmup: indices without a full window are NAN
     for (size_t i = 0; i < window - 1 && i < n; i++) {
         out[i] = MLR_NAN;
     }
@@ -31,9 +27,9 @@ mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *ou
 
     double offset = first_finite(x, n);
 
-    // O(n) sliding sum over the finite values only; windows containing any
-    // non-finite value emit NAN and the accumulator stays clean, so output
-    // recovers as soon as the bad value leaves the window
+    // Sliding sum over the finite values only; `bad` counts non-finite values
+    // in the current window, so the sum stays clean and output recovers as
+    // soon as the last bad value leaves
     double sum = 0.0;
     size_t bad = 0;
     for (size_t j = 0; j < window; j++) {
@@ -44,20 +40,19 @@ mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *ou
         }
     }
 
-    for (size_t i = window - 1; ; i++) {
+    for (size_t i = window - 1; i < n; i++) {
         out[i] = (bad > 0) ? MLR_NAN : offset + sum / (double)window;
-        if (i + 1 >= n) {
-            break;
-        }
-        if (mlr_isfinite(x[i + 1])) {
-            sum += x[i + 1] - offset;
-        } else {
-            bad++;
-        }
-        if (mlr_isfinite(x[i + 1 - window])) {
-            sum -= x[i + 1 - window] - offset;
-        } else {
-            bad--;
+        if (i + 1 < n) {
+            if (mlr_isfinite(x[i + 1])) {
+                sum += x[i + 1] - offset;
+            } else {
+                bad++;
+            }
+            if (mlr_isfinite(x[i + 1 - window])) {
+                sum -= x[i + 1 - window] - offset;
+            } else {
+                bad--;
+            }
         }
     }
 
@@ -65,14 +60,10 @@ mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *ou
 }
 
 mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *out) {
-    if (x == NULL || out == NULL) {
-        return MLR_EINVAL;
-    }
-    if (n == 0 || window == 0) {
+    if (x == NULL || out == NULL || n == 0 || window == 0) {
         return MLR_EINVAL;
     }
 
-    // Warmup: indices without a full window are NAN
     for (size_t i = 0; i < window - 1 && i < n; i++) {
         out[i] = MLR_NAN;
     }
@@ -97,16 +88,12 @@ mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *out
         }
     }
 
-    // O(n) rolling Welford updates while the window is clean; windows with a
-    // non-finite value emit NAN, and the accumulators are rebuilt (O(window),
-    // only on recovery) once the bad value leaves
     double mean = 0.0;
     double m2 = 0.0;
     int valid = 0;
 
     for (size_t i = window - 1; i < n; i++) {
         if (i >= window) {
-            // Slide: x[i] entered, x[i - window] left
             if (!mlr_isfinite(x[i])) {
                 bad++;
             }
@@ -133,7 +120,7 @@ mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *out
             }
             valid = 1;
         } else {
-            // Remove the oldest sample, add the newest (rolling Welford)
+            // Rolling Welford: remove the oldest sample, add the newest
             double x_old = x[i - window] - offset;
             double x_new = x[i] - offset;
 
@@ -153,25 +140,37 @@ mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *out
     return MLR_OK;
 }
 
+// A return usable by the EWMA recursion: finite, and its square is too
+static int usable_return(double r) {
+    return mlr_isfinite(r) && mlr_isfinite(r * r);
+}
+
 mlr_status mlr_ewma_vol(const double *returns, size_t n, double lambda, double *out) {
-    if (returns == NULL || out == NULL) {
+    if (returns == NULL || out == NULL || n == 0) {
         return MLR_EINVAL;
     }
-    if (n == 0) {
-        return MLR_EINVAL;
-    }
-    if (lambda < 0.0 || lambda > 1.0) {
+    if (!mlr_isfinite(lambda) || lambda < 0.0 || lambda >= 1.0) {
         return MLR_EINVAL;
     }
 
-    // Initialize first variance with first return squared
-    double variance = returns[0] * returns[0];
-    out[0] = sqrt(variance);
+    // No forecast exists until one usable return has been seen
+    size_t s = 0;
+    while (s < n && !usable_return(returns[s])) {
+        out[s] = MLR_NAN;
+        s++;
+    }
+    if (s == n) {
+        return MLR_OK;
+    }
+    out[s] = MLR_NAN;
+    double variance = returns[s] * returns[s];
 
-    // Update variance using EWMA recursion
-    for (size_t i = 1; i < n; i++) {
-        variance = lambda * variance + (1.0 - lambda) * (returns[i] * returns[i]);
-        out[i] = sqrt(variance);
+    // out[t] is emitted before returns[t] is absorbed: predictive alignment
+    for (size_t t = s + 1; t < n; t++) {
+        out[t] = sqrt(variance);
+        if (usable_return(returns[t])) {
+            variance = lambda * variance + (1.0 - lambda) * returns[t] * returns[t];
+        }
     }
 
     return MLR_OK;

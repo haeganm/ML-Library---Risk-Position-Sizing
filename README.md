@@ -1,284 +1,128 @@
 # mlrisk
 
-> A lightweight C11 library for volatility forecasting and position sizing with time-series-safe evaluation utilities.
+> A C11 library for volatility forecasting, position sizing, and leakage-safe walk-forward evaluation.
 
 [![CI](https://github.com/haeganm/mlrisk/actions/workflows/ci.yml/badge.svg)](https://github.com/haeganm/mlrisk/actions/workflows/ci.yml)
 [![C11](https://img.shields.io/badge/C-C11-blue.svg)](https://en.wikipedia.org/wiki/C11_(C_standard_revision))
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)]()
 
-## Overview
+- **Volatility forecasts**: EWMA, GARCH(1,1) fitted by maximum likelihood, and per-bar Parkinson and Garman-Klass range estimators
+- **Position sizing**: volatility targeting with a leverage cap, Kelly fractions, drawdown-based exposure scaling
+- **Walk-forward splits** with purging and embargo, so labels never overlap the test window
+- **Rolling mean and standard deviation** in O(n), stable at large price levels
+- **Ridge regression** for small feature sets
 
-**mlrisk** is a C11 static library for quantitative finance, focused on correctness and portability:
+Zero dependencies beyond libm. Builds as strict ISO C11 on GCC, Clang, and MSVC, with tests on Linux, macOS, and Windows plus an AddressSanitizer/UBSan job. Every volatility forecast shares one timing convention (below), and the GARCH fitter is checked against the Python `arch` package on identical samples.
 
-- **Volatility estimators** — EWMA, GARCH(1,1) fitted by MLE, and range-based Parkinson / Garman-Klass
-- **Position sizing** — volatility targeting, Kelly fractions, and drawdown-based exposure scaling
-- **Purged + embargoed walk-forward splits** — backtest without lookahead or label-overlap leakage
-- **Rolling statistics** — O(n) sliding mean and standard deviation (rolling Welford updates)
-- **Ridge regression** — closed-form linear models for volatility forecasting
+This is research software, not investment advice.
 
-Pure C11 with zero external dependencies, cross-platform (Windows, macOS, Linux), built with `-Werror`, and tested in CI on all three platforms plus an AddressSanitizer/UBSan job.
+## Build
 
-**Disclaimer:** This project is for educational and research purposes only and does not constitute financial, investment, or trading advice. Trading involves risk, including the possible loss of principal. Use at your own risk.
-
-## Quick Start
-
-Prerequisites: [CMake](https://cmake.org/download/) 3.15+ and any C11 compiler (GCC 4.9+, Clang 3.3+, MSVC 2015+).
+Requires CMake 3.21 and a C11 compiler.
 
 ```bash
-git clone https://github.com/haeganm/mlrisk.git
-cd mlrisk
-
-# Configure and build
-cmake -S . -B build
-cmake --build build --config Release
-
-# Run tests
-ctest --test-dir build -C Release --output-on-failure
-
-# Try the demo
-./build/Release/vol_target_demo    # Linux/macOS
-.\build\Release\vol_target_demo.exe  # Windows
-```
-
-<details><summary>Platform-specific build variants</summary>
-
-```bash
-# Linux / macOS
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-
-# Windows (Visual Studio)
-cmake -S . -B build
 cmake --build build --config Release
-
-# Windows (MinGW)
-cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+ctest --test-dir build -C Release --output-on-failure
+./build/vol_target_demo            # Windows: .\build\Release\vol_target_demo.exe
 ```
-</details>
+
+Use it from CMake either as a subdirectory or after `cmake --install build`:
+
+```cmake
+add_subdirectory(path/to/mlrisk)          # or: find_package(mlrisk 3 REQUIRED)
+target_link_libraries(your_target PRIVATE mlrisk::mlrisk)
+```
+
+A pkg-config file (`mlrisk.pc`) is installed too. Options: `MLRISK_WERROR`, `MLRISK_BUILD_TESTS`, `MLRISK_BUILD_EXAMPLES` (all default ON when mlrisk is the top-level project, OFF when consumed).
 
 ## Usage
 
-### Volatility Forecasting & Position Sizing
-
 ```c
 #include "mlrisk/mlrisk.h"
-#include <stdio.h>
 
-int main(void) {
-    double returns[] = {0.01, -0.02, 0.015, -0.01, 0.02};
-    double prices[] = {100.0, 99.0, 100.5, 99.5, 101.5};
-    size_t n = 5;
+// returns[t] is the return over period t; prices[t] the close of period t
+mlr_garch model;
+if (mlr_garch_fit(returns, n_train, &model) != MLR_OK) { /* handle */ }
 
-    // 1. Compute EWMA volatility
-    double sigma[5];
-    mlr_status status = mlr_ewma_vol(returns, n, 0.94, sigma);
-    if (status != MLR_OK) {
-        fprintf(stderr, "Error computing volatility\n");
-        return 1;
-    }
+// sigma[t] is the forecast for period t, made from returns[0..t-1]
+double sigma[N];
+mlr_garch_filter(&model, returns, N, sigma);
 
-    // 2. Compute position sizes using volatility targeting
-    double positions[5];
-    status = mlr_vol_target_position(
-        sigma,           // volatility forecast
-        0.01,            // target volatility (1% per-period)
-        100000.0,        // account equity ($100k)
-        prices,          // asset prices
-        2.0,             // max leverage (2x)
-        n,
-        positions
-    );
-    if (status != MLR_OK) {
-        fprintf(stderr, "Error computing positions\n");
-        return 1;
-    }
-
-    for (size_t i = 0; i < n; i++) {
-        printf("Period %zu: sigma=%.6f, position=%.2f shares\n",
-               i, sigma[i], positions[i]);
-    }
-    return 0;
-}
+// A position held over period t is entered at the close of t-1, so size it
+// against prices[t-1]. Its PnL is position[t] * prices[t-1] * returns[t].
+double position[N];
+mlr_vol_target_position(sigma + 1, 0.01 /* target vol per period */,
+                        100000.0 /* equity */, prices /* prices[t-1] for t>=1 */,
+                        2.0 /* max leverage */, N - 1, position + 1);
 ```
 
-### Purged Walk-Forward Splits
+`examples/vol_target_demo.c` runs this end to end inside a walk-forward loop and reports realized strategy volatility against the target.
+
+Purged walk-forward splits:
 
 ```c
-#include "mlrisk/split.h"
-#include <stdlib.h>
-
-// Count-query first, then fill - no guessing at array sizes
+// 252-period training windows, 21-period test windows, stepping by 21.
+// Labels are 21-period forward returns, so purge 20 (h - 1) training samples.
 size_t count;
-mlr_walk_forward_splits(n, 252, 21, 21, 5, 5, 0, NULL, 0, &count);
-
+mlr_walk_forward_splits(n, 252, 21, 21, 20, 0, 0, NULL, 0, &count);
 mlr_split *splits = malloc(count * sizeof *splits);
-mlr_walk_forward_splits(n, 252, 21, 21, 5, 5, 0, splits, count, &count);
-
+mlr_walk_forward_splits(n, 252, 21, 21, 20, 0, 0, splits, count, &count);
 for (size_t i = 0; i < count; i++) {
     // train on [splits[i].train_start, splits[i].train_end)
-    // evaluate on [splits[i].test_start, splits[i].test_end)
+    // test on  [splits[i].test_start,  splits[i].test_end)
 }
 free(splits);
 ```
 
-### Linking in Your Project
-
-Via `add_subdirectory`:
-
-```cmake
-add_subdirectory(path/to/mlrisk)
-target_link_libraries(your_target PRIVATE mlrisk::mlrisk)
-```
-
-Or install it (`cmake --install build`) and use `find_package`:
-
-```cmake
-find_package(mlrisk 2 REQUIRED)
-target_link_libraries(your_target PRIVATE mlrisk::mlrisk)
-```
-
-## API Reference
-
-### Volatility Estimators (`include/mlrisk/vol.h`, `rolling.h`)
-
-```c
-// EWMA volatility (per-period sigma)
-mlr_status mlr_ewma_vol(const double *returns, size_t n, double lambda, double *out);
-
-// GARCH(1,1): fit by Gaussian MLE, filter in-sample, forecast ahead
-typedef struct {
-    double omega, alpha, beta;  // sigma2[t] = omega + alpha*r[t-1]^2 + beta*sigma2[t-1]
-    double sigma2_next;         // one-step-ahead variance after the fit sample
-    double loglik;              // maximized log-likelihood
-    int converged;              // 0 = best-effort result
-} mlr_garch;
-
-mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out);
-mlr_status mlr_garch_filter(const mlr_garch *m, const double *returns, size_t n, double *sigma_out);
-mlr_status mlr_garch_forecast(const mlr_garch *m, size_t horizon, double *sigma_out);
-
-// Range-based per-bar estimators (bad bars produce NAN, not errors)
-mlr_status mlr_parkinson_vol(const double *high, const double *low, size_t n, double *out);
-mlr_status mlr_garman_klass_vol(const double *open, const double *high,
-                                const double *low, const double *close,
-                                size_t n, double *out);
-```
-
-### Rolling Statistics (`include/mlrisk/rolling.h`)
-
-```c
-// O(n) sliding-window mean and standard deviation
-mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *out);
-mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *out);
-```
-
-### Position Sizing (`include/mlrisk/sizing.h`)
-
-```c
-// Volatility targeting: position = (target_vol / sigma) * (equity / price),
-// capped at max_leverage * equity notional. To cap risk per position instead,
-// pass the risk cap (fraction of equity) as target_vol - the formula is identical.
-mlr_status mlr_vol_target_position(
-    const double *sigma, double target_vol, double equity,
-    const double *price, double max_leverage, size_t n, double *position_out);
-
-// Kelly fraction: f = fraction * mean / sample_variance (may be negative)
-mlr_status mlr_kelly_fraction(const double *returns, size_t n, double fraction, double *f_out);
-
-// Drawdown-based exposure scaling: 1 at zero drawdown, linearly to 0 at max_dd
-mlr_status mlr_drawdown_scale(const double *equity, size_t n, double max_dd, double *scale_out);
-```
-
-### Walk-Forward Splits (`include/mlrisk/split.h`)
-
-```c
-typedef struct {            // all ranges half-open [start, end)
-    size_t train_start, train_end;         // pre-test training (purged)
-    size_t test_start, test_end;           // test window
-    size_t train_post_start, train_post_end; // post-test training (opt-in, embargoed)
-} mlr_split;
-
-mlr_status mlr_walk_forward_splits(
-    size_t n, size_t train_len, size_t test_len, size_t step,
-    size_t purge, size_t embargo, int include_post_train,
-    mlr_split *splits_out, size_t capacity, size_t *count_out);
-```
-
-- `purge` drops the last samples of each training window whose labels would overlap the test horizon.
-- `embargo` skips samples immediately after the test window before any post-test training data.
-- `include_post_train` exposes a post-test training segment for purged-CV-style model selection. **Warning:** that segment is future data relative to the test window — leave it at 0 for genuine out-of-sample walk-forward.
-- Pass `splits_out = NULL` for a count query; insufficient `capacity` returns `MLR_EBOUNDS` with the required count in `*count_out`.
-
-### Linear Regression (`include/mlrisk/linreg.h`)
-
-```c
-mlr_lin_model model;
-mlr_lin_model_init(&model, feature_dim, ridge_param);
-
-mlr_status mlr_linreg_fit(const double *X, const double *y, size_t n, size_t d,
-                          double ridge, mlr_lin_model *model_out);
-mlr_status mlr_linreg_predict(const double *X, size_t n, size_t d,
-                              const mlr_lin_model *model, double *out);
-
-mlr_lin_model_free(&model);
-```
-
-### Error Handling
-
-All functions return `mlr_status`:
-
-- `MLR_OK` - Success
-- `MLR_EINVAL` - Invalid argument
-- `MLR_ENOMEM` - Memory allocation failure
-- `MLR_EBOUNDS` - Output capacity too small (splits)
-- `MLR_EDOMAIN` - Domain error (singular matrix, zero variance, bad equity path)
-
 ## Conventions
 
-### Volatility
+**Timing.** `mlr_ewma_vol` and `mlr_garch_filter` are predictive: output `t` is the forecast for period `t` from returns before `t`. Position `t` from `mlr_vol_target_position` is held over period `t` and scored against `returns[t]`. Nothing at index `t` has seen `returns[t]`. The range estimators are per-bar and contemporaneous by construction; lag them one bar before sizing. Missing data (a non-finite return) never changes a forecast already made; the recursions carry on and recover.
 
-mlrisk uses **per-period volatility** throughout. To convert annualized volatility to per-period:
+**Per-period volatility** everywhere. Annualized to per-period: divide by `sqrt(periods_per_year)` (252 daily, 52 weekly, 12 monthly).
 
-```
-per_period_vol = annualized_vol / sqrt(periods_per_year)
-```
+**Variance.** `mlr_rolling_std` is population variance (divides by `window`; pandas `rolling().std()` defaults to sample). `mlr_kelly_fraction` uses sample variance (`n-1`). `mlr_garch_fit` is Gaussian MLE on mean-zero returns, with the recursion started from `sigma2[0] = omega + (alpha + beta) * backcast`, `backcast = mean(r^2)` over the fit sample, the same presample rule as `arch`.
 
-- Daily data: `daily_vol = annualized_vol / sqrt(252)`
-- Weekly data: `weekly_vol = annualized_vol / sqrt(52)`
-- Monthly data: `monthly_vol = annualized_vol / sqrt(12)`
+**Purging.** For labels built from `h` periods, the last `h-1` training samples before a test window overlap it; pass `purge = h - 1`. The optional post-test training segment is future data relative to the test window and contains every later split's test window; it is for purged-CV model selection only.
 
-### Variance
+**Errors.** Every function returns `mlr_status`: `MLR_OK`, `MLR_EINVAL` (bad argument), `MLR_ENOMEM`, `MLR_EBOUNDS` (output capacity too small; splits only), `MLR_EDOMAIN` (singular system, zero variance, overflow, bad equity path). Bad *elements* (a NaN price, a bar with high < low) produce a NaN or zero at that index with `MLR_OK`; bad *arguments* fail the call. `mlr_isfinite` and `mlr_isnan` are exported for callers.
 
-Each function documents its variance convention explicitly:
+## API
 
-- `mlr_rolling_std` uses **population** variance (divides by `window`) — note pandas `rolling().std()` defaults to the sample convention.
-- `mlr_kelly_fraction` uses **sample** variance (divides by `n-1`).
-- `mlr_garch_fit` is Gaussian **MLE**; returns are assumed mean-zero and the recursion is seeded with the mean of squared returns.
+Full documentation lives in the headers.
 
-### EWMA Parameters
+| Function | Header | Purpose |
+|---|---|---|
+| `mlr_rolling_mean`, `mlr_rolling_std` | `rolling.h` | O(n) trailing-window statistics |
+| `mlr_ewma_vol` | `rolling.h` | RiskMetrics EWMA volatility forecast |
+| `mlr_garch_fit`, `mlr_garch_filter`, `mlr_garch_forecast` | `vol.h` | GARCH(1,1) by MLE; filter any series; multi-step forecast |
+| `mlr_parkinson_vol`, `mlr_garman_klass_vol` | `vol.h` | Per-bar range estimators |
+| `mlr_vol_target_position` | `sizing.h` | Volatility targeting with a leverage cap |
+| `mlr_kelly_fraction` | `sizing.h` | Mean-variance Kelly fraction |
+| `mlr_drawdown_scale` | `sizing.h` | Linear exposure scaling by drawdown |
+| `mlr_walk_forward_splits` | `split.h` | Purged, embargoed walk-forward splits |
+| `mlr_lin_model_init`, `mlr_linreg_fit`, `mlr_linreg_predict`, `mlr_lin_model_free` | `linreg.h` | Ridge regression |
+| `MLRISK_VERSION` | `version.h` | Version macros |
 
-Typical `lambda` values for daily data: 0.94 - 0.97. Higher lambda = slower decay = more persistent volatility.
+## Validation
 
-### Lookahead Avoidance
+The GARCH fitter is tested against `arch` 7.2.0 on two simulated samples. Both sides fit the identical series with the identical backcast, so they maximize the same likelihood; the constants are regenerated by `tests/reference/garch_arch_reference.py`.
 
-`mlr_walk_forward_splits` guarantees training data precedes test data with no overlap, and additionally supports purging (drop training labels that overlap the test horizon) and embargo. When backtesting, always use walk-forward splits — and purge when your labels span multiple periods.
+| Sample 1 (n = 2000) | mlrisk | arch |
+|---|---|---|
+| alpha | 0.0810353 | 0.0810352 |
+| beta | 0.8835013 | 0.8835015 |
+| omega | 1.355614e-6 | 1.355607e-6 |
+| log-likelihood | 9259.9490823 | 9259.9490821 |
 
-## v2 Breaking Changes
+The second sample (persistence 0.976) agrees to the same precision. `arch` needs the returns rescaled by 100 to converge on these samples; mlrisk fits the raw series, and its estimates are invariant to the scale of the input.
 
-v2.0.0 reworked the public API; there is no compatibility layer.
+The rolling standard deviation is checked against a two-pass computation at a price level of 1e9 to 1e-12, and every forecast is checked for prefix stability (the output at `t` is identical whether or not the data after `t` is present).
 
-| v1 | v2 |
-|---|---|
-| `rolling_mean` / `rolling_std` / `ewma_vol` | `mlr_rolling_mean` / `mlr_rolling_std` / `mlr_ewma_vol` |
-| `vol_target_position` | `mlr_vol_target_position` (now validates `target_vol > 0`) |
-| `risk_cap_position` | removed — identical to `mlr_vol_target_position`; pass the risk cap as `target_vol` |
-| `risk_forecast_ewma` | removed — was an alias for `mlr_ewma_vol` |
-| `walk_forward_ranges` + `mlr_range` | `mlr_walk_forward_splits` + `mlr_split` (capacity-safe, purge/embargo) |
-| `linreg_fit` / `linreg_predict` | `mlr_linreg_fit` / `mlr_linreg_predict` |
-| `mlrisk/risk.h` | removed — `mlr_lin_model` now lives in `mlrisk/linreg.h` |
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md). 3.0.0 is a breaking release; the EWMA alignment and the linreg init signature changed.
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

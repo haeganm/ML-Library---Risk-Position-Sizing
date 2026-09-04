@@ -1,201 +1,118 @@
+// Walk-forward volatility targeting on a simulated GARCH series.
+//
+// For each walk-forward split: fit GARCH(1,1) on the training window, run the
+// filter forward so every test-period sigma is a forecast made from returns
+// before that period, size a position from that forecast, and score it
+// against the return of the same period. If the alignment is right, the
+// realized volatility of the strategy lands near the target.
+//
+// Usage: vol_target_demo [seed]
+
 #include "mlrisk/mlrisk.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include <time.h>
 
-#define N 200
-#define LOW_VOL_PERIOD 100
-#define HIGH_VOL_MULTIPLIER 3.0
+enum { N = 1500, TRAIN = 500, TEST = 250 };
 
-/**
- * Generate synthetic returns with volatility regime change
- */
-static void generate_synthetic_returns(double *returns, size_t n) {
-    srand((unsigned int)time(NULL));
-    
-    // Low volatility regime (first half)
-    for (size_t i = 0; i < LOW_VOL_PERIOD; i++) {
-        returns[i] = 0.001 * ((double)rand() / RAND_MAX - 0.5);
-    }
-    
-    // High volatility regime (second half)
-    for (size_t i = LOW_VOL_PERIOD; i < n; i++) {
-        returns[i] = HIGH_VOL_MULTIPLIER * 0.001 * ((double)rand() / RAND_MAX - 0.5);
+static double lcg_u01(unsigned long long *state) {
+    *state = *state * 6364136223846793005ULL + 1442695040888963407ULL;
+    return ((double)(*state >> 11) + 0.5) / 9007199254740992.0;
+}
+
+static double lcg_gauss(unsigned long long *state) {
+    double u1 = lcg_u01(state);
+    double u2 = lcg_u01(state);
+    return sqrt(-2.0 * log(u1)) * cos(2.0 * 3.14159265358979323846 * u2);
+}
+
+static void simulate(unsigned long long seed, double *returns, double *prices, size_t n) {
+    const double omega = 2e-6, alpha = 0.10, beta = 0.85;
+    double s2 = omega / (1.0 - alpha - beta);
+    prices[0] = 100.0;
+    returns[0] = 0.0;
+    for (size_t t = 1; t < n; t++) {
+        returns[t] = sqrt(s2) * lcg_gauss(&seed);
+        prices[t] = prices[t - 1] * (1.0 + returns[t]);
+        s2 = omega + alpha * returns[t] * returns[t] + beta * s2;
     }
 }
 
-/**
- * Generate synthetic prices (random walk)
- */
-static void generate_synthetic_prices(const double *returns, double *prices, size_t n, double initial_price) {
-    prices[0] = initial_price;
-    for (size_t i = 1; i < n; i++) {
-        prices[i] = prices[i-1] * (1.0 + returns[i]);
-    }
+static double stdev(const double *x, size_t n) {
+    double mean = 0.0;
+    for (size_t i = 0; i < n; i++) mean += x[i];
+    mean /= (double)n;
+    double var = 0.0;
+    for (size_t i = 0; i < n; i++) var += (x[i] - mean) * (x[i] - mean);
+    return sqrt(var / (double)n);
 }
 
-/**
- * Compute summary statistics
- */
-static void compute_stats(const double *data, size_t n, double *mean, double *min, double *max) {
-    double sum = 0.0;
-    *min = data[0];
-    *max = data[0];
-    
-    size_t valid_count = 0;
-    for (size_t i = 0; i < n; i++) {
-        if (!mlr_isnan(data[i])) {
-            sum += data[i];
-            valid_count++;
-            if (data[i] < *min) *min = data[i];
-            if (data[i] > *max) *max = data[i];
-        }
-    }
-    
-    *mean = (valid_count > 0) ? (sum / valid_count) : 0.0;
-}
+int main(int argc, char **argv) {
+    unsigned long long seed = argc > 1 ? strtoull(argv[1], NULL, 10) : 42ULL;
+    static double returns[N], prices[N], sigma[N], entry_price[TEST], sigma_test[TEST],
+                  position[TEST], strat_ret[TEST];
 
-int main(void) {
-    printf("=== mlrisk Volatility Targeting Demo ===\n\n");
-    
-    // Allocate arrays
-    double returns[N];
-    double prices[N];
-    double sigma[N];
-    double positions[N];
-    
-    // Generate synthetic data
-    printf("Generating synthetic returns with volatility regime change...\n");
-    printf("  Period 0-%zu: Low volatility regime\n", (size_t)(LOW_VOL_PERIOD - 1));
-    printf("  Period %zu-%zu: High volatility regime (%.1fx multiplier)\n\n",
-           (size_t)LOW_VOL_PERIOD, (size_t)(N - 1), HIGH_VOL_MULTIPLIER);
-    
-    generate_synthetic_returns(returns, N);
-    generate_synthetic_prices(returns, prices, N, 100.0);
-    
-    // Compute EWMA volatility
-    printf("Computing EWMA volatility (lambda=0.94)...\n");
-    double lambda = 0.94;
-    mlr_status status = mlr_ewma_vol(returns, N, lambda, sigma);
-    
-    if (status != MLR_OK) {
-        fprintf(stderr, "Error computing EWMA volatility: %d\n", status);
+    const double target_vol = 0.01;   // 1% per period
+    const double equity = 100000.0;   // held constant: no compounding in this demo
+    const double max_leverage = 3.0;
+
+    simulate(seed, returns, prices, N);
+
+    size_t count;
+    mlr_walk_forward_splits(N, TRAIN, TEST, TEST, 0, 0, 0, NULL, 0, &count);
+    mlr_split *splits = malloc(count * sizeof *splits);
+    if (splits == NULL || mlr_walk_forward_splits(N, TRAIN, TEST, TEST, 0, 0, 0, splits, count, &count) != MLR_OK) {
+        fprintf(stderr, "split generation failed\n");
         return 1;
     }
-    
-    // Compute position sizing
-    printf("Computing position sizes (volatility targeting)...\n");
-    double target_vol = 0.01;  // 1% per-period target volatility
-    double equity = 100000.0;   // $100k account
-    double max_leverage = 2.0;  // 2x maximum leverage
-    
-    status = mlr_vol_target_position(
-        sigma, target_vol, equity, prices, max_leverage, N, positions
-    );
-    
-    if (status != MLR_OK) {
-        fprintf(stderr, "Error computing position sizes: %d\n", status);
-        return 1;
-    }
-    
-    // Print sample rows
-    printf("\n=== Sample Data (first 10 and last 10 periods) ===\n");
-    printf("%6s %10s %10s %10s %12s %12s\n",
-           "Period", "Return", "Price", "Sigma", "Position", "Notional");
-    printf("%6s %10s %10s %10s %12s %12s\n",
-           "------", "------", "-----", "-----", "--------", "--------");
-    
-    // First 10 rows
-    for (size_t i = 0; i < 10 && i < N; i++) {
-        double notional = positions[i] * prices[i];
-        printf("%6zu %10.6f %10.2f %10.6f %12.2f %12.2f\n",
-               i, returns[i], prices[i], sigma[i], positions[i], notional);
-    }
-    
-    printf("  ...\n");
-    
-    // Last 10 rows
-    size_t start = (N > 10) ? (N - 10) : 0;
-    for (size_t i = start; i < N; i++) {
-        double notional = positions[i] * prices[i];
-        printf("%6zu %10.6f %10.2f %10.6f %12.2f %12.2f\n",
-               i, returns[i], prices[i], sigma[i], positions[i], notional);
-    }
-    
-    // Summary statistics
-    printf("\n=== Summary Statistics ===\n");
-    
-    // Sigma stats
-    double sigma_mean, sigma_min, sigma_max;
-    compute_stats(sigma, N, &sigma_mean, &sigma_min, &sigma_max);
-    printf("Volatility (sigma):\n");
-    printf("  Mean: %.6f\n", sigma_mean);
-    printf("  Min:  %.6f\n", sigma_min);
-    printf("  Max:  %.6f\n", sigma_max);
-    
-    // Position stats
-    double pos_mean, pos_min, pos_max;
-    compute_stats(positions, N, &pos_mean, &pos_min, &pos_max);
-    printf("\nPosition sizes:\n");
-    printf("  Mean: %.2f shares\n", pos_mean);
-    printf("  Min:  %.2f shares\n", pos_min);
-    printf("  Max:  %.2f shares\n", pos_max);
-    
-    // Compare low vol vs high vol periods
-    printf("\n=== Regime Comparison ===\n");
-    
-    double low_vol_sigma_mean = 0.0, high_vol_sigma_mean = 0.0;
-    double low_vol_pos_mean = 0.0, high_vol_pos_mean = 0.0;
-    size_t low_count = 0, high_count = 0;
-    
-    for (size_t i = 0; i < LOW_VOL_PERIOD; i++) {
-        if (!mlr_isnan(sigma[i])) {
-            low_vol_sigma_mean += sigma[i];
-            low_vol_pos_mean += positions[i];
-            low_count++;
+
+    printf("mlrisk %s  seed %llu  target vol %.2f%%  %zu walk-forward folds\n\n",
+           MLRISK_VERSION, seed, 100.0 * target_vol, count);
+    printf("%4s %12s %8s %8s %6s %14s %12s\n",
+           "fold", "test window", "alpha", "beta", "conv", "realized vol", "pnl");
+
+    for (size_t k = 0; k < count; k++) {
+        const mlr_split *s = &splits[k];
+
+        mlr_garch model;
+        if (mlr_garch_fit(returns + s->train_start, s->train_end - s->train_start, &model) != MLR_OK) {
+            fprintf(stderr, "fold %zu: GARCH fit failed\n", k);
+            return 1;
         }
-    }
-    
-    for (size_t i = LOW_VOL_PERIOD; i < N; i++) {
-        if (!mlr_isnan(sigma[i])) {
-            high_vol_sigma_mean += sigma[i];
-            high_vol_pos_mean += positions[i];
-            high_count++;
+
+        // Filter from the start of the training window through the end of
+        // the test window: sigma[t] uses returns before t, parameters from
+        // the training window only
+        if (mlr_garch_filter(&model, returns + s->train_start, s->test_end - s->train_start,
+                             sigma + s->train_start) != MLR_OK) {
+            fprintf(stderr, "fold %zu: GARCH filter failed\n", k);
+            return 1;
         }
+
+        // A position held over period t is entered at the close of t-1
+        for (size_t t = s->test_start; t < s->test_end; t++) {
+            sigma_test[t - s->test_start] = sigma[t];
+            entry_price[t - s->test_start] = prices[t - 1];
+        }
+        if (mlr_vol_target_position(sigma_test, target_vol, equity, entry_price,
+                                    max_leverage, TEST, position) != MLR_OK) {
+            fprintf(stderr, "fold %zu: sizing failed\n", k);
+            return 1;
+        }
+
+        double pnl = 0.0;
+        for (size_t t = s->test_start; t < s->test_end; t++) {
+            size_t i = t - s->test_start;
+            double gain = position[i] * entry_price[i] * returns[t];
+            strat_ret[i] = gain / equity;
+            pnl += gain;
+        }
+
+        printf("%4zu %5zu-%-6zu %8.4f %8.4f %6d %13.2f%% %12.2f\n",
+               k, s->test_start, s->test_end, model.alpha, model.beta, model.converged,
+               100.0 * stdev(strat_ret, TEST), pnl);
     }
-    
-    if (low_count > 0) {
-        low_vol_sigma_mean /= low_count;
-        low_vol_pos_mean /= low_count;
-    }
-    if (high_count > 0) {
-        high_vol_sigma_mean /= high_count;
-        high_vol_pos_mean /= high_count;
-    }
-    
-    printf("Low volatility period (0-%zu):\n", (size_t)(LOW_VOL_PERIOD - 1));
-    printf("  Avg sigma:  %.6f\n", low_vol_sigma_mean);
-    printf("  Avg position: %.2f shares\n", low_vol_pos_mean);
-    
-    printf("\nHigh volatility period (%zu-%zu):\n", (size_t)LOW_VOL_PERIOD, (size_t)(N - 1));
-    printf("  Avg sigma:  %.6f\n", high_vol_sigma_mean);
-    printf("  Avg position: %.2f shares\n", high_vol_pos_mean);
-    
-    printf("\nRatio (high/low):\n");
-    if (low_vol_sigma_mean > 0) {
-        printf("  Sigma:  %.2fx\n", high_vol_sigma_mean / low_vol_sigma_mean);
-    }
-    if (low_vol_pos_mean > 0) {
-        printf("  Position: %.2fx (inverse relationship expected)\n",
-               high_vol_pos_mean / low_vol_pos_mean);
-    }
-    
-    printf("\n=== Demo Complete ===\n");
-    printf("Key observations:\n");
-    printf("  - Sigma increases in high volatility regime\n");
-    printf("  - Position sizes decrease as sigma increases (volatility targeting)\n");
-    printf("  - Leverage cap (%.1fx) prevents excessive exposure\n", max_leverage);
-    
+
+    free(splits);
     return 0;
 }

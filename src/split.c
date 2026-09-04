@@ -22,28 +22,37 @@ mlr_status mlr_walk_forward_splits(
         return MLR_EINVAL;
     }
 
+    // Not enough data for a single split. Checked this way so that the loop
+    // arithmetic below cannot wrap around.
+    if (train_len > n || test_len > n - train_len) {
+        *count_out = 0;
+        return MLR_OK;
+    }
+    size_t last_train_start = n - train_len - test_len;
+
     size_t count = 0;
-    for (size_t train_start = 0;
-         train_start + train_len + test_len <= n;
-         train_start += step) {
+    for (size_t train_start = 0; train_start <= last_train_start; train_start += step) {
         if (splits_out != NULL && count < capacity) {
             mlr_split s;
+            s.train_start = train_start;
             s.test_start = train_start + train_len;
             s.test_end = s.test_start + test_len;
-            s.train_start = train_start;
             s.train_end = s.test_start - purge;
 
-            if (include_post_train && s.test_end + embargo < n) {
+            // test_end <= n, so n - test_end cannot wrap
+            if (include_post_train && embargo < n - s.test_end) {
                 s.train_post_start = s.test_end + embargo;
-                s.train_post_end = n;
             } else {
                 s.train_post_start = n;
-                s.train_post_end = n;
             }
+            s.train_post_end = n;
 
             splits_out[count] = s;
         }
         count++;
+        if (step > last_train_start - train_start) {
+            break;
+        }
     }
 
     *count_out = count;

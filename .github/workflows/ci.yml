@@ -5,20 +5,41 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-test:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - { os: ubuntu-latest, cc: gcc }
+          - { os: ubuntu-latest, cc: clang }
+          - { os: macos-latest, cc: clang }
+          - { os: windows-latest, cc: "" }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Select compiler
+        if: matrix.cc != ''
+        run: echo "CC=${{ matrix.cc }}" >> "$GITHUB_ENV"
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build --config Release
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Run example (Unix)
+        if: runner.os != 'Windows'
+        run: ./build/vol_target_demo
+      - name: Run example (Windows)
+        if: runner.os == 'Windows'
+        run: .\build\Release\vol_target_demo.exe
 
   sanitize:
     runs-on: ubuntu-latest
@@ -33,3 +54,46 @@ jobs:
         run: cmake --build build
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  install-consume:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and install
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMLRISK_BUILD_TESTS=OFF -DMLRISK_BUILD_EXAMPLES=OFF
+          cmake --build build
+          cmake --install build --prefix "$PWD/prefix"
+      - name: Consume via find_package
+        run: |
+          mkdir consumer && cd consumer
+          cat > main.c <<'C'
+          #include "mlrisk/mlrisk.h"
+          #include <stdio.h>
+          int main(void) {
+              double r[] = {0.01, -0.02, 0.015}, s[3];
+              mlr_status st = mlr_ewma_vol(r, 3, 0.94, s);
+              printf("mlrisk %s status %d sigma %.6f\n", MLRISK_VERSION, (int)st, s[2]);
+              return st == MLR_OK ? 0 : 1;
+          }
+          C
+          cat > CMakeLists.txt <<'CM'
+          cmake_minimum_required(VERSION 3.21)
+          project(consumer C)
+          find_package(mlrisk 3 REQUIRED)
+          add_executable(consumer main.c)
+          target_link_libraries(consumer PRIVATE mlrisk::mlrisk)
+          CM
+          cmake -S . -B build -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/prefix"
+          cmake --build build
+          ./build/consumer
+      - name: Consume via pkg-config
+        run: |
+          export PKG_CONFIG_PATH="$PWD/prefix/lib/pkgconfig"
+          pkg-config --modversion mlrisk
+          cc -std=c11 consumer/main.c $(pkg-config --cflags --libs mlrisk) -o consumer_pc
+          ./consumer_pc
+      - name: Public headers compile as C++
+        run: |
+          echo '#include "mlrisk/mlrisk.h"' > headers.cpp
+          c++ -std=c++17 -Wall -Wextra -Werror -fsyntax-only -I prefix/include headers.cpp
