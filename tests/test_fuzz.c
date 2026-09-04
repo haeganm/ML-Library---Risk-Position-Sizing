@@ -7,6 +7,7 @@
 // does.
 #include "mlrisk/mlrisk.h"
 #include "test_util.h"
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
