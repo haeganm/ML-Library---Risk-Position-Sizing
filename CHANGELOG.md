@@ -9,6 +9,20 @@
   over period `t` de-levers on the bar of a loss using that bar's own close.
   The header, the sizing contract and the README now say to use
   `scale[t-1]`; a test pins the alignment. No code change.
+- The rolling mean and standard deviation shifted every value by the first
+  finite value of the whole series and never revisited that choice. A bad
+  first tick therefore corrupted every later window: with prices near 100
+  and a first value of 1e9, windows that did not even contain it had a
+  standard deviation 600% off and a mean off by 1e-6; a first value of 1e12
+  made the std meaningless. A long trend away from the starting level eroded
+  precision the same way. The offset now comes from inside the current
+  window, the accumulators are rebuilt every `window` samples (amortized
+  O(1)) and whenever a leaving sample carried almost all of the variance or
+  the sum, so an outlier that has left leaves no rounding behind. Measured
+  against exact rational arithmetic: 6e-16 relative for the std and an exact
+  mean after first ticks of 1e9, 1e12 and 1e15 and along a trend from 100
+  to 1e6. Cost: about 5 ns per element for the mean and 20 for the std,
+  up from 4 and 15.
 - `mlr_kelly_fraction` returned `f = 0` with `MLR_OK` when the squared
   deviations overflowed (variance `Inf`), a silently rounded estimate where
   the same function already refuses the NaN form of the overflow. It now

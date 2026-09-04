@@ -10,7 +10,7 @@
 - **GARCH(1,1) by maximum likelihood** with no optimizer dependency, checked against the Python `arch` package on identical samples and identical likelihoods, and invariant to the units of the returns (a fit on returns scaled by 1e-8 gives the same alpha and beta as one scaled by 1e6).
 - **Sizing that fails closed.** Volatility targeting with a notional cap, mean-variance Kelly, drawdown-based exposure scaling. A NaN price or sigma gives a zero position; a NaN equity or leverage refuses the call. Nothing turns into a NaN position with `MLR_OK`.
 - **Purged, embargoed walk-forward splits** with a count-query API and no `size_t` arithmetic that can wrap.
-- **Rolling mean and standard deviation** in O(n) that stay accurate at index levels: 1.7e-15 at a price level of 1e9, where a plain two-pass computation is already off by 4.9e-12.
+- **Rolling mean and standard deviation** in O(n) that stay accurate at index levels (1.7e-15 at a price level of 1e9, where a plain two-pass computation is already off by 4.9e-12), along a trend from 100 to 1e6, and after a bad tick has left the window.
 - **Ridge regression** for small feature sets by Householder QR on the centered design, so the intercept is unpenalized and accuracy stays at condition number times epsilon where normal equations would square it.
 
 Builds as strict ISO C11 under GCC, Clang and MSVC with `-Wall -Wextra -Wpedantic -Werror` and `-ffp-contract=off` (`/W4 /WX /fp:precise /fp:contract-` on MSVC), so results agree across compilers configured for no fused multiply-add to the last bit. The public headers need only C99. CI runs the test suite on Linux (gcc and clang, 64- and 32-bit), macOS and Windows, under AddressSanitizer and UBSan, installs the library and consumes it through `find_package` and `pkg-config`, compiles the public headers as C++17, and runs a Python job that compares every function against pandas, numpy, scikit-learn and `arch`. This is research software, not investment advice.
@@ -130,8 +130,8 @@ The 1-minute BTC series (45,030 returns, rms 1e-3) is the case that broke 2.x: o
 
 | Function | n | Time | ns per element |
 |---|---|---|---|
-| `mlr_rolling_mean`, window 50 | 10,000,000 | 42 ms | 4.2 |
-| `mlr_rolling_std`, window 50 | 10,000,000 | 153 ms | 15.3 |
+| `mlr_rolling_mean`, window 50 | 10,000,000 | 49 ms | 4.9 |
+| `mlr_rolling_std`, window 50 | 10,000,000 | 205 ms | 20.5 |
 | `mlr_ewma_vol` | 10,000,000 | 39 ms | 3.9 |
 | `mlr_garch_filter` | 10,000,000 | 49 ms | 4.9 |
 | `mlr_garch_fit` | 100,000 | 506 ms | three starts, about 1400 likelihood evaluations |
@@ -170,6 +170,7 @@ Range estimators (`mlr_parkinson_vol`, `mlr_garman_klass_vol`), the rolling stat
 |---|---|---|
 | Rolling mean and std, windows 1 to n, NaN and Inf gaps | pandas `rolling` | max error 3.1e-11 |
 | Rolling std at price level 1e9 | exact rational arithmetic on the input doubles | 1.7e-15 (numpy two-pass: 4.9e-12) |
+| Rolling mean and std after a bad first tick of 1e9 to 1e15, and along a trend 100 to 1e6 | exact rational arithmetic | 6e-16 std, exact mean |
 | EWMA, predictive alignment | pandas `ewm(adjust=False)` shifted one period | 3.5e-18 |
 | GARCH filter and 20-step forecast | `arch` conditional variance and `forecast()` | 4.4e-16 and 8.9e-16 relative |
 | GARCH fit, 20 samples, same likelihood | `arch` | max parameter difference 5.0e-7 |

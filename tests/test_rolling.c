@@ -149,6 +149,47 @@ static int test_rolling_shift_invariance(void) {
     PASS("shift invariance at level 1e9");
 }
 
+static int test_rolling_outliers_and_trend(void) {
+    // The sliding accumulators must not remember an outlier after it has
+    // left the window, and must not lose precision as the level drifts away
+    // from where the series started. Reference: two-pass on values shifted
+    // by the window's own first element, which is exact to rounding.
+    enum { N = 400, W = 20 };
+    static double x[N], mean_out[N], std_out[N];
+    unsigned long long state = 2718;
+
+    double firsts[] = {1e9, 1e12, 1e15};
+    for (size_t f = 0; f < 3; f++) {
+        for (size_t i = 0; i < N; i++) x[i] = 100.0 + (test_lcg_u01(&state) - 0.5);
+        x[0] = firsts[f];
+        x[200] = -firsts[f];
+        ASSERT(mlr_rolling_mean(x, N, W, mean_out) == MLR_OK, "mean with outliers OK");
+        ASSERT(mlr_rolling_std(x, N, W, std_out) == MLR_OK, "std with outliers OK");
+        for (size_t i = W - 1; i < N; i++) {
+            double mean, sd;
+            naive_stats(x, i - W + 1, i, &mean, &sd);
+            int contains_outlier = (i - W + 1 == 0) || (i >= 200 && i - W + 1 <= 200);
+            if (contains_outlier) continue;
+            ASSERT_NEAR(mean_out[i], mean, 1e-12, "mean of a clean window is unaffected by an outlier that left");
+            ASSERT_NEAR(std_out[i], sd, 1e-12, "std of a clean window is unaffected by an outlier that left");
+        }
+    }
+
+    // Trend from 100 to 1e6 with unit noise
+    enum { T = 20000 };
+    static double trend[T], tm[T], ts[T];
+    for (size_t i = 0; i < T; i++) trend[i] = 100.0 + (1e6 - 100.0) * (double)i / (T - 1) + (test_lcg_u01(&state) - 0.5);
+    ASSERT(mlr_rolling_mean(trend, T, 50, tm) == MLR_OK, "trend mean OK");
+    ASSERT(mlr_rolling_std(trend, T, 50, ts) == MLR_OK, "trend std OK");
+    for (size_t i = 49; i < T; i += 97) {
+        double mean, sd;
+        naive_stats(trend, i - 49, i, &mean, &sd);
+        ASSERT_NEAR(tm[i] / mean, 1.0, 1e-14, "mean along a long trend");
+        ASSERT_NEAR(ts[i] / sd, 1.0, 1e-12, "std along a long trend");
+    }
+    PASS("outliers leaving the window and long trends");
+}
+
 static int test_rolling_nan_recovery(void) {
     // A bad value affects only the windows containing it
     enum { N = 20, W = 3 };
@@ -285,6 +326,7 @@ int test_rolling(void) {
     failures += test_rolling_std_edge_cases();
     failures += test_rolling_shift_invariance();
     failures += test_rolling_nan_recovery();
+    failures += test_rolling_outliers_and_trend();
     failures += test_ewma_vol_known_answer();
     failures += test_ewma_vol_invalid_inputs();
     failures += test_ewma_vol_missing_data();

@@ -1,16 +1,35 @@
 #include "mlrisk/rolling.h"
 #include <math.h>
 
-// Reference level for offset-shifted accumulation: the first finite value.
-// Variance is shift-invariant and the mean shifts back, so subtracting a
-// common level keeps precision when the series sits far from zero.
-static double first_finite(const double *x, size_t n) {
-    for (size_t i = 0; i < n; i++) {
-        if (mlr_isfinite(x[i])) {
-            return x[i];
+// Sliding-window statistics are accumulated on values shifted by an
+// offset taken from inside the current window, and the accumulators are
+// rebuilt from scratch every `window` steps (amortized O(1) per element)
+// so the offset can never drift far from the data. A single global offset
+// would make every later window inaccurate after a bad first tick, and a
+// long trend away from the starting level would erode precision the same
+// way. Windows containing a non-finite value emit MLR_NAN.
+
+// The offset is the window's last finite value: rebuilds happen every
+// `window` steps, so that value stays inside every window until the next
+// rebuild and |x - offset| never exceeds the window's own range
+static double window_offset(const double *x, size_t start, size_t window) {
+    size_t j = start + window;
+    while (j-- > start) {
+        if (mlr_isfinite(x[j])) {
+            return x[j];
         }
     }
     return 0.0;
+}
+
+static size_t count_bad(const double *x, size_t start, size_t window) {
+    size_t bad = 0;
+    for (size_t j = start; j < start + window; j++) {
+        if (!mlr_isfinite(x[j])) {
+            bad++;
+        }
+    }
+    return bad;
 }
 
 mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *MLR_RESTRICT out) {
@@ -25,35 +44,46 @@ mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *ML
         return MLR_OK;
     }
 
-    double offset = first_finite(x, n);
-
-    // Sliding sum over the finite values only; `bad` counts non-finite values
-    // in the current window, so the sum stays clean and output recovers as
-    // soon as the last bad value leaves
+    double offset = 0.0;
     double sum = 0.0;
     size_t bad = 0;
-    for (size_t j = 0; j < window; j++) {
-        if (mlr_isfinite(x[j])) {
-            sum += x[j] - offset;
-        } else {
-            bad++;
-        }
-    }
 
     for (size_t i = window - 1; i < n; i++) {
-        out[i] = (bad > 0) ? MLR_NAN : offset + sum / (double)window;
-        if (i + 1 < n) {
-            if (mlr_isfinite(x[i + 1])) {
-                sum += x[i + 1] - offset;
+        size_t start = i - window + 1;
+        int rebuild = (start % window == 0);
+        if (!rebuild) {
+            // Slide: x[i] enters, x[i - window] leaves; the sum only ever
+            // holds finite values, so it is clean the moment `bad` returns to 0
+            if (mlr_isfinite(x[i])) {
+                sum += x[i] - offset;
             } else {
                 bad++;
             }
-            if (mlr_isfinite(x[i + 1 - window])) {
-                sum -= x[i + 1 - window] - offset;
+            if (mlr_isfinite(x[i - window])) {
+                double leaving = x[i - window] - offset;
+                sum -= leaving;
+                // A leaving value that dwarfs what remains (an outlier) has
+                // left its rounding behind in the sum; rebuild instead
+                if (fabs(leaving) > 1e6 * fabs(sum)) {
+                    rebuild = 1;
+                }
             } else {
                 bad--;
             }
         }
+        if (rebuild) {
+            offset = window_offset(x, start, window);
+            sum = 0.0;
+            bad = 0;
+            for (size_t j = start; j <= i; j++) {
+                if (mlr_isfinite(x[j])) {
+                    sum += x[j] - offset;
+                } else {
+                    bad++;
+                }
+            }
+        }
+        out[i] = (bad > 0) ? MLR_NAN : offset + sum / (double)window;
     }
 
     return MLR_OK;
@@ -79,21 +109,19 @@ mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *MLR
     }
 
     double w = (double)window;
-    double offset = first_finite(x, n);
-
-    size_t bad = 0;
-    for (size_t j = 0; j < window; j++) {
-        if (!mlr_isfinite(x[j])) {
-            bad++;
-        }
-    }
-
+    double offset = 0.0;
     double mean = 0.0;
     double m2 = 0.0;
+    size_t bad = 0;
     int valid = 0;
 
     for (size_t i = window - 1; i < n; i++) {
-        if (i >= window) {
+        size_t start = i - window + 1;
+        int periodic = (start % window == 0);
+
+        if (periodic) {
+            bad = count_bad(x, start, window);
+        } else {
             if (!mlr_isfinite(x[i])) {
                 bad++;
             }
@@ -101,36 +129,45 @@ mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *MLR
                 bad--;
             }
         }
-
         if (bad > 0) {
             out[i] = MLR_NAN;
             valid = 0;
             continue;
         }
 
-        if (!valid) {
-            // Rebuild with standard Welford accumulation over this window
-            mean = 0.0;
-            m2 = 0.0;
-            for (size_t j = i - window + 1; j <= i; j++) {
-                double xs = x[j] - offset;
-                double delta = xs - mean;
-                mean += delta / (double)(j - (i - window + 1) + 1);
-                m2 += delta * (xs - mean);
-            }
-            valid = 1;
-        } else {
+        int rebuild = periodic || !valid;
+        if (!rebuild) {
             // Rolling Welford: remove the oldest sample, add the newest
             double x_old = x[i - window] - offset;
             double x_new = x[i] - offset;
+            double m2_before = m2;
 
             double mean_removed = (w * mean - x_old) / (w - 1.0);
             m2 -= (x_old - mean) * (x_old - mean_removed);
             mean = mean_removed;
 
-            double mean_added = mean + (x_new - mean) / w;
-            m2 += (x_new - mean) * (x_new - mean_added);
-            mean = mean_added;
+            // If the sample that left carried almost all of the variance
+            // (an outlier leaving the window) the subtraction above has
+            // cancelled catastrophically; rebuild instead of trusting it
+            if (m2 < 1e-6 * m2_before) {
+                rebuild = 1;
+            } else {
+                double mean_added = mean + (x_new - mean) / w;
+                m2 += (x_new - mean) * (x_new - mean_added);
+                mean = mean_added;
+            }
+        }
+        if (rebuild) {
+            offset = window_offset(x, start, window);
+            mean = 0.0;
+            m2 = 0.0;
+            for (size_t j = start; j <= i; j++) {
+                double xs = x[j] - offset;
+                double delta = xs - mean;
+                mean += delta / (double)(j - start + 1);
+                m2 += delta * (xs - mean);
+            }
+            valid = 1;
         }
 
         // Removal can push m2 epsilon-negative

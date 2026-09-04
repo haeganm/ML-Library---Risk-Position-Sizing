@@ -247,6 +247,26 @@ def check_rolling():
     check("rolling std at level 1e9 vs exact rational arithmetic", worst < 1e-12,
           f"max abs err {worst:.2e} (numpy's own two-pass: {worst_numpy:.2e})")
 
+    # A bad first tick must not affect windows that do not contain it, and a
+    # long trend away from the starting level must not erode precision
+    def exact_stats(win):
+        v = [Fraction(float(t)) for t in win]; m = sum(v) / len(v)
+        return float(m), math.sqrt(float(sum((t - m) ** 2 for t in v) / len(v)))
+    worst_s = worst_m = 0.0
+    base = 100 + rng.standard_normal(300)
+    series = []
+    for first in (1e9, 1e12, 1e15):
+        x = base.copy(); x[0] = first; series.append((x, 20, [i for i in range(20, 300)]))
+    trend = np.linspace(100, 1e6, 50000) + rng.standard_normal(50000)
+    series.append((trend, 50, list(range(49, 50000, 499))))
+    for x, w, idx in series:
+        s_out = rolling_std(x, w); m_out = rolling_mean(x, w)
+        for i in idx:
+            m, sd = exact_stats(x[i - w + 1:i + 1])
+            worst_s = max(worst_s, abs(s_out[i] - sd) / sd); worst_m = max(worst_m, abs(m_out[i] - m) / abs(m))
+    check("rolling mean/std after a bad first tick (1e9..1e15) and along a trend 100->1e6, vs exact arithmetic",
+          worst_s < 1e-13 and worst_m < 1e-14, f"max rel err std {worst_s:.2e}, mean {worst_m:.2e}")
+
 
 # ------------------------------------------------------------- 2. EWMA
 def check_ewma():

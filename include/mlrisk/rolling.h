@@ -27,6 +27,11 @@ extern "C" {
 /**
  * @brief Rolling mean, O(n)
  *
+ * Sliding sum on values shifted by an offset from inside the current
+ * window, rebuilt every `window` samples and whenever a leaving value
+ * dwarfs what remains, so an outlier that has left the window leaves no
+ * rounding behind.
+ *
  * @param x Input (length n)
  * @param n Length of x
  * @param window Window size (>= 1)
@@ -36,11 +41,14 @@ extern "C" {
 mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *MLR_RESTRICT out);
 
 /**
- * @brief Rolling standard deviation, O(n) on clean data
+ * @brief Rolling standard deviation, O(n)
  *
- * Rolling Welford updates on offset-shifted values, so precision does not
- * degrade at large price levels. After each gap (a window containing a
- * non-finite value) the accumulators are rebuilt in O(window).
+ * Rolling Welford updates on values shifted by an offset taken from inside
+ * the current window; the accumulators are rebuilt every `window` samples,
+ * after each gap (a window containing a non-finite value), and whenever a
+ * sample leaving the window carried almost all of its variance. Precision
+ * therefore does not degrade at large price levels, along long trends, or
+ * after an outlier has left the window.
  *
  * @param x Input (length n)
  * @param n Length of x
