@@ -114,8 +114,6 @@ jobs:
     environment:
       name: pypi
       url: https://pypi.org/p/walkforward
-    permissions:
-      id-token: write   # trusted publishing, no API token
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -124,4 +122,11 @@ jobs:
           merge-multiple: true
       - name: What is about to be published
         run: ls -l dist
+      # Trusted publishing would be preferable, but GitHub issues this
+      # repository an OIDC subject of the form
+      # repo:owner@<id>/repo@<id>:environment:pypi and PyPI matches against
+      # repo:owner/repo:..., so the exchange is refused. Revisit when PyPI
+      # accepts the identifier-bearing subject.
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}

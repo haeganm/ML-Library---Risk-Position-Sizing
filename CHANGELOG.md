@@ -4,7 +4,10 @@
 
 First release published to PyPI as `walkforward`. The C library is unchanged
 from 3.3.1; everything here is the Python package and the machinery to ship
-it.
+it. Publishing uses a PyPI API token rather than trusted publishing, because
+GitHub issues this repository an OIDC subject claim carrying numeric owner and
+repository identifiers that PyPI does not match; `RELEASING.md` has the
+detail.
 
 ### Added
 
