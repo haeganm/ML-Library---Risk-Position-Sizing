@@ -20,8 +20,12 @@
 - Wheels are `py3-none`: the binding never touches the Python C API, so one
   wheel per platform serves every Python 3.
 - A `python-package` CI job builds and tests the wheel on Linux, macOS and
-  Windows, and asserts the package and the library it bundles report the
-  same version.
+  Windows, asserts the package and the library it bundles report the same
+  version, and installs from a source distribution in a clean directory so
+  the sdist keeps carrying the C it has to compile.
+- The Python packaging sits at the repository root rather than in `python/`,
+  because a source distribution has to contain `src/` and `include/` and
+  those cannot be reached from a subdirectory.
 
 
 ## 3.3.1 (2026-09-04)

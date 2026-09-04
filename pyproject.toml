@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "walkforward"
 description = "Volatility forecasts, position sizing and purged walk-forward splits that never see the future"
-readme = "README.md"
+readme = "python/README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Haegan McGarry" }]
@@ -34,21 +34,36 @@ test = ["pytest>=7", "scikit-learn>=1.1", "pandas>=1.5"]
 Homepage = "https://github.com/haeganm/walkforward"
 Changelog = "https://github.com/haeganm/walkforward/blob/main/CHANGELOG.md"
 
+# The packaging lives at the repository root so that a source distribution
+# carries the C library it has to compile. python/CMakeLists.txt reaches back
+# here for src/ and include/, which works the same in a checkout and in an
+# unpacked sdist.
 [tool.scikit-build]
 minimum-version = "0.10"
 cmake.version = ">=3.21"
-build-dir = "build/{wheel_tag}"
-wheel.packages = ["src/walkforward"]
+cmake.source-dir = "python"
+build-dir = "build/python/{wheel_tag}"
+wheel.packages = ["python/src/walkforward"]
 # The binding is ctypes and never touches the Python C API, so one wheel per
 # platform serves every Python 3 that can import it
 wheel.py-api = "py3"
-sdist.include = ["../src/*.c", "../include/mlrisk/*.h", "../include/mlrisk/version.h.in"]
+sdist.include = [
+    "src/*.c",
+    "include/mlrisk/*.h",
+    "include/mlrisk/version.h.in",
+    "CMakeLists.txt",
+    "python/CMakeLists.txt",
+    "python/README.md",
+    "python/tests/*.py",
+    "LICENSE",
+]
+sdist.exclude = [".github", "build", "build-*", "bench", "examples", "tests/reference"]
 
 # The version comes from the root CMakeLists, the same place the C reads it
 [tool.scikit-build.metadata.version]
 provider = "scikit_build_core.metadata.regex"
-input = "../CMakeLists.txt"
+input = "CMakeLists.txt"
 regex = 'project\(mlrisk VERSION (?P<value>[0-9]+\.[0-9]+\.[0-9]+)'
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["python/tests"]

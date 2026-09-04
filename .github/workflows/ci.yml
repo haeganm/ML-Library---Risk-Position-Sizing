@@ -147,9 +147,16 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Build and install the wheel
-        run: python -m pip install "./python[test]"
+        run: python -m pip install ".[test]"
       - name: Test against the installed wheel
-        working-directory: python
-        run: python -m pytest tests -q
+        run: python -m pytest python/tests -q
+      - name: A source distribution carries the C it has to compile
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python -m pip install build
+          python -m build --sdist --outdir dist .
+          cd "$(mktemp -d)"
+          python -m pip install --force-reinstall "$GITHUB_WORKSPACE"/dist/*.tar.gz
+          python -c "import walkforward; print(walkforward.__version__)"
       - name: The package and the library it bundles agree on the version
         run: python -c "import walkforward as wf; assert wf.__version__ == wf.c_version(), (wf.__version__, wf.c_version()); print(wf.__version__)"
