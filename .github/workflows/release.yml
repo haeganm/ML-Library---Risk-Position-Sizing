@@ -87,9 +87,28 @@ jobs:
           name: dist-${{ matrix.label }}
           path: wheelhouse/*.whl
 
+  check:
+    name: Distributions are fit to publish
+    needs: [sdist, wheels]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Metadata and long description must render on PyPI
+        run: |
+          python -m pip install twine
+          ls -l dist
+          python -m twine check --strict dist/*
+
   publish:
     name: Publish to PyPI
-    needs: [version, sdist, wheels]
+    needs: [version, sdist, wheels, check]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     environment:
