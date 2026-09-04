@@ -138,11 +138,16 @@ mlr_status mlr_linreg_fit(
         return MLR_ENOMEM;
     }
 
+    // Means are taken on values shifted by the first row: differences of
+    // nearby doubles are exact, so a feature at level 1e9 with unit variation
+    // is centered to the precision of the variation, not of the level. A
+    // plain sum at the level's magnitude leaves its rounding in every
+    // centered value and biases the slope. mu_x holds the shifted means.
     double mu_y = 0.0;
     for (size_t i = 0; i < n; i++) {
-        mu_y += y[i];
+        mu_y += y[i] - y[0];
         for (size_t j = 0; j < d; j++) {
-            mu_x[j] += X[i * d + j];
+            mu_x[j] += X[i * d + j] - X[j];
         }
     }
     mu_y /= (double)n;
@@ -154,9 +159,9 @@ mlr_status mlr_linreg_fit(
     // appended: min ||Xc w - yc||^2 + ridge ||w||^2
     for (size_t i = 0; i < n; i++) {
         for (size_t j = 0; j < d; j++) {
-            A[i * d + j] = X[i * d + j] - mu_x[j];
+            A[i * d + j] = (X[i * d + j] - X[j]) - mu_x[j];
         }
-        b[i] = y[i] - mu_y;
+        b[i] = (y[i] - y[0]) - mu_y;
     }
     if (ridge > 0.0) {
         double sr = sqrt(ridge);
@@ -170,11 +175,12 @@ mlr_status mlr_linreg_fit(
 
     mlr_status status = qr_solve(A, b, rows, d, w);
     if (status == MLR_OK) {
+        // Intercept from the full means: level plus shifted mean
         double xw = 0.0;
         for (size_t j = 0; j < d; j++) {
-            xw += mu_x[j] * w[j];
+            xw += (X[j] + mu_x[j]) * w[j];
         }
-        double intercept = mu_y - xw;
+        double intercept = (y[0] + mu_y) - xw;
         if (!mlr_isfinite(intercept)) {
             status = MLR_EDOMAIN;
         } else {

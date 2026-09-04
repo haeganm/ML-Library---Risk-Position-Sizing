@@ -165,6 +165,31 @@ static int test_linreg_ill_conditioned(void) {
     PASS("linreg ill-conditioned");
 }
 
+static int test_linreg_feature_at_large_level(void) {
+    // A feature at level 1e9 or 1e12 with unit variation. y is built from
+    // exact differences (Sterbenz), so the true slope is 2 to rounding and
+    // the intercept is 1 - 2 * level. Centering with a plain sum at the
+    // level's magnitude would leave rounding of order n * eps * level in
+    // every centered value and bias the slope.
+    enum { N = 500 };
+    static double X[N], y[N];
+    unsigned long long state = 4242;
+    double levels[] = {1e9, 1e12};
+    for (size_t l = 0; l < 2; l++) {
+        for (size_t i = 0; i < N; i++) {
+            X[i] = levels[l] + (test_lcg_u01(&state) - 0.5);
+            y[i] = 2.0 * (X[i] - levels[l]) + 1.0;
+        }
+        mlr_lin_model model;
+        ASSERT(mlr_lin_model_init(&model, 1) == MLR_OK, "init OK");
+        ASSERT(mlr_linreg_fit(X, y, N, 1, 0.0, &model) == MLR_OK, "fit at large level OK");
+        ASSERT_NEAR(model.w[0], 2.0, 1e-12, "slope at a large feature level");
+        ASSERT_NEAR(model.b / (1.0 - 2.0 * levels[l]), 1.0, 1e-12, "intercept at a large feature level");
+        mlr_lin_model_free(&model);
+    }
+    PASS("linreg feature at large level");
+}
+
 static int test_linreg_failure_leaves_model_unchanged(void) {
     double X[] = {0.0, 1.0, 2.0, 3.0, 4.0};
     double y[] = {1.0, 3.0, 5.0, 7.0, 9.0};
@@ -252,6 +277,7 @@ int test_linreg(void) {
     failures += test_linreg_invalid_inputs();
     failures += test_linreg_ill_conditioned();
     failures += test_linreg_failure_leaves_model_unchanged();
+    failures += test_linreg_feature_at_large_level();
     failures += test_linreg_underdetermined();
     failures += test_lin_model_init_free();
     return failures;

@@ -23,6 +23,13 @@
   mean after first ticks of 1e9, 1e12 and 1e15 and along a trend from 100
   to 1e6. Cost: about 5 ns per element for the mean and 20 for the std,
   up from 4 and 15.
+- `mlr_linreg_fit` centered each feature with a plain running sum, so a
+  feature at a large level carried rounding of order n * eps * level into
+  every centered value: with a price column near 1e9 and unit variation
+  the slope was off by 4e-12, and at 1e12 by 7e-7, while an SVD solve
+  reached 1e-15. Columns are now shifted by the first row before centering
+  (differences of nearby doubles are exact), which puts the slope at 4e-15
+  from 1e6 to 1e15, ahead of scikit-learn's 1.7e-5 at 1e15.
 - `mlr_kelly_fraction` returned `f = 0` with `MLR_OK` when the squared
   deviations overflowed (variance `Inf`), a silently rounded estimate where
   the same function already refuses the NaN form of the overflow. It now

@@ -468,6 +468,18 @@ def check_ridge():
             st, w, b = ridge_fit(X, y, ridge)
             assert st == OK, (cond, ridge, st)
             rows.append((cond, ridge, float(np.linalg.norm(w - w_ref) / np.linalg.norm(w_ref))))
+    # Features at a large level: centering must be to the precision of the
+    # variation, not the level. Reference is exact rational OLS.
+    worst_lvl = 0.0
+    for level in (1e6, 1e9, 1e12, 1e15):
+        x = level + rng.standard_normal(500); yl = 2.0 * (x - level) + 1.0 + 0.1 * rng.standard_normal(500)
+        Xf = [Fraction(float(v)) for v in x]; Yf = [Fraction(float(v)) for v in yl]
+        mx = sum(Xf) / 500; my = sum(Yf) / 500
+        w_ex = sum((a - mx) * (bb - my) for a, bb in zip(Xf, Yf)) / sum((a - mx) ** 2 for a in Xf)
+        st, w, b = ridge_fit(x.reshape(-1, 1), yl, 0.0)
+        worst_lvl = max(worst_lvl, abs(w[0] - float(w_ex)) / abs(float(w_ex)))
+    check("ridge slope with a feature at level 1e6..1e15 vs exact rational OLS", worst_lvl < 1e-13, f"max rel err {worst_lvl:.2e}")
+
     worst = max(r[2] / (r[0] * 2.2e-16) for r in rows)   # error in units of cond * eps
     check("ridge on ill-conditioned designs vs SVD least squares (cond 1e4..1e10)", worst < 100,
           "max error = %.0f x (cond * eps); " % worst + ", ".join(f"cond {c:.0e}: {e:.1e}" for c, rg, e in rows if rg == 0.0))

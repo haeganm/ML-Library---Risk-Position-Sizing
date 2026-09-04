@@ -10,8 +10,11 @@
  *
  * Least squares by Householder QR on the centered design with sqrt(ridge) I
  * appended, so accuracy is about condition number times epsilon rather
- * than its square. Intended for d in the tens, not the thousands. Output
- * arrays must not alias inputs (MLR_RESTRICT, types.h).
+ * than its square. Centering is done on values shifted by the first row, so
+ * a feature at a large level (a price near 1e9 with unit variation) is
+ * centered to the precision of its variation, not its level. Intended for
+ * d in the tens, not the thousands. Output arrays must not alias inputs
+ * (MLR_RESTRICT, types.h).
  */
 
 #ifdef __cplusplus
