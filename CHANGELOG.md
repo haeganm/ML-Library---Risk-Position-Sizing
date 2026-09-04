@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A Python package, `walkforward`, in `python/`. It binds this library with
+  ctypes and numpy: `ewma_vol`, `garch_fit` returning a `GarchModel` with
+  `persistence`, `half_life` and `unconditional_vol`, the rolling statistics
+  with a `lag` helper, the sizing functions, `Ridge`, and
+  `PurgedWalkForward`, a scikit-learn cross-validator.
+- Two API decisions worth naming. The splitter asks for `label_horizon`
+  rather than a purge count, because `purge = h - 1` is the part users get
+  wrong, and it has no `embargo` argument, because a walk-forward never
+  trains on data after the window it is testing. `walk_forward_splits`
+  exposes the post-training variant for people who want it.
+- The binding allocates every output buffer itself, so the `restrict`
+  non-aliasing contract on the C outputs cannot be violated by a numpy view,
+  and a pandas Series keeps its index through a call.
+- Wheels are `py3-none`: the binding never touches the Python C API, so one
+  wheel per platform serves every Python 3.
+- A `python-package` CI job builds and tests the wheel on Linux, macOS and
+  Windows, and asserts the package and the library it bundles report the
+  same version.
+
+
 ## 3.3.1 (2026-09-04)
 
 - `mlr_drawdown_scale` is contemporaneous (`scale[t]` uses the close at the

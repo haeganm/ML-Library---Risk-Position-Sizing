@@ -130,3 +130,26 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMLRISK_BUILD_TESTS=OFF -DMLRISK_BUILD_BENCH=ON && cmake --build build
       - name: Check the C library against independent references
         run: MLRISK_DEMO=build/vol_target_demo python tests/reference/reference_check.py
+
+  python-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.9" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: macos-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.13" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Build and install the wheel
+        run: python -m pip install "./python[test]"
+      - name: Test against the installed wheel
+        working-directory: python
+        run: python -m pytest tests -q
+      - name: The package and the library it bundles agree on the version
+        run: python -c "import walkforward as wf; assert wf.__version__ == wf.c_version(), (wf.__version__, wf.c_version()); print(wf.__version__)"

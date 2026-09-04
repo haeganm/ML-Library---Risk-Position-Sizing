@@ -1,0 +1,54 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "numpy>=1.23"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "walkforward"
+description = "Volatility forecasts, position sizing and purged walk-forward splits that never see the future"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Haegan McGarry" }]
+keywords = [
+    "walk-forward", "purged-cross-validation", "backtesting", "lookahead-bias",
+    "volatility", "garch", "position-sizing", "quantitative-finance",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: C",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = ["numpy>=1.23"]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+sklearn = ["scikit-learn>=1.1"]
+test = ["pytest>=7", "scikit-learn>=1.1", "pandas>=1.5"]
+
+[project.urls]
+Homepage = "https://github.com/haeganm/walkforward"
+Changelog = "https://github.com/haeganm/walkforward/blob/main/CHANGELOG.md"
+
+[tool.scikit-build]
+minimum-version = "0.10"
+cmake.version = ">=3.21"
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["src/walkforward"]
+# The binding is ctypes and never touches the Python C API, so one wheel per
+# platform serves every Python 3 that can import it
+wheel.py-api = "py3"
+sdist.include = ["../src/*.c", "../include/mlrisk/*.h", "../include/mlrisk/version.h.in"]
+
+# The version comes from the root CMakeLists, the same place the C reads it
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.regex"
+input = "../CMakeLists.txt"
+regex = 'project\(mlrisk VERSION (?P<value>[0-9]+\.[0-9]+\.[0-9]+)'
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

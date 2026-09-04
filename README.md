@@ -15,6 +15,26 @@
 
 Builds as strict ISO C11 under GCC, Clang and MSVC with `-Wall -Wextra -Wpedantic -Werror` and `-ffp-contract=off` (`/W4 /WX /fp:precise /fp:contract-` on MSVC), so results agree across compilers configured for no fused multiply-add to the last bit. The public headers need only C99. CI runs the test suite on Linux (gcc and clang, 64- and 32-bit), macOS and Windows, under AddressSanitizer and UBSan, installs the library and consumes it through `find_package` and `pkg-config`, compiles the public headers as C++17, and runs a Python job that compares every function against pandas, numpy, scikit-learn and `arch`. This is research software, not investment advice.
 
+## Python
+
+Most users want the Python package, which wraps this library with numpy and a
+scikit-learn cross-validator:
+
+```bash
+pip install walkforward
+```
+
+```python
+import walkforward as wf
+
+cv = wf.PurgedWalkForward(train_size=756, test_size=252, label_horizon=21)
+model = wf.garch_fit(returns[:1000] - returns[:1000].mean())
+sigma = model.filter_from(returns[1000:])
+```
+
+Source and docs in [`python/`](python/README.md). The rest of this file is the
+C library the package is built on.
+
 ## Build
 
 Requires CMake 3.21 and any C11 compiler.
