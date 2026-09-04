@@ -48,8 +48,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install 32-bit toolchain
         run: sudo apt-get update && sudo apt-get install -y gcc-multilib
-      - name: Configure (-m32, size_t is 32 bits)
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-m32 -DCMAKE_EXE_LINKER_FLAGS=-m32
+      - name: Configure (-m32, size_t is 32 bits; SSE math, no x87 excess precision)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="-m32 -msse2 -mfpmath=sse" -DCMAKE_EXE_LINKER_FLAGS=-m32
       - name: Build
         run: cmake --build build
       - name: Test
@@ -127,6 +127,6 @@ jobs:
       - name: Install reference packages
         run: pip install -r tests/reference/requirements.txt
       - name: Build the example
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMLRISK_BUILD_TESTS=OFF && cmake --build build
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMLRISK_BUILD_TESTS=OFF -DMLRISK_BUILD_BENCH=ON && cmake --build build
       - name: Check the C library against independent references
         run: MLRISK_DEMO=build/vol_target_demo python tests/reference/reference_check.py

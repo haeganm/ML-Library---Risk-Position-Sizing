@@ -13,7 +13,7 @@
 - **Rolling mean and standard deviation** in O(n) that stay accurate at index levels: 1.7e-15 at a price level of 1e9, where a plain two-pass computation is already off by 4.9e-12.
 - **Ridge regression** for small feature sets by Householder QR on the centered design, so the intercept is unpenalized and accuracy stays at condition number times epsilon where normal equations would square it.
 
-Builds as strict ISO C11 under GCC, Clang and MSVC with `-Wall -Wextra -Wpedantic -Werror` and `-ffp-contract=off` (`/W4 /WX /fp:precise` on MSVC), so results agree across compilers to the last bit. CI runs the test suite on Linux (gcc and clang, 64- and 32-bit), macOS and Windows, under AddressSanitizer and UBSan, installs the library and consumes it through `find_package` and `pkg-config`, compiles the public headers as C++17, and runs a Python job that compares every function against pandas, numpy, scikit-learn and `arch`. This is research software, not investment advice.
+Builds as strict ISO C11 under GCC, Clang and MSVC with `-Wall -Wextra -Wpedantic -Werror` and `-ffp-contract=off` (`/W4 /WX /fp:precise /fp:contract-` on MSVC), so results agree across compilers configured for no fused multiply-add to the last bit. The public headers need only C99. CI runs the test suite on Linux (gcc and clang, 64- and 32-bit), macOS and Windows, under AddressSanitizer and UBSan, installs the library and consumes it through `find_package` and `pkg-config`, compiles the public headers as C++17, and runs a Python job that compares every function against pandas, numpy, scikit-learn and `arch`. This is research software, not investment advice.
 
 ## Build
 
@@ -53,8 +53,11 @@ mlr_garch model;
 if (mlr_garch_fit(returns, TRAIN, &model) != MLR_OK) { /* zero or non-finite variance, or fewer than 100 returns */ }
 
 // sigma[t] is the forecast for period t from returns[0..t-1]; the model's
-// stored backcast seeds the recursion, never the data being filtered
-mlr_garch_filter(&model, returns, N, sigma);
+// stored backcast seeds the recursion, never the data being filtered.
+// The fit assumes mean-zero returns: subtract the TRAINING-window mean from
+// every return first (the full-sample mean would be a lookahead). A 13%/yr
+// drift left in moves alpha by about 0.002; 0.2%/day moves it by 0.015.
+if (mlr_garch_filter(&model, returns, N, sigma) != MLR_OK) { /* recursion overflowed */ }
 
 // The same thing for the out-of-sample part alone: continue from the
 // variance state at the end of the fit sample. Filtering returns + TRAIN
@@ -73,9 +76,10 @@ Splits, for labels that span 21 periods:
 
 ```c
 size_t count;
-mlr_walk_forward_splits(n, 252, 21, 21, 20, 0, 0, NULL, 0, &count);    // purge = h - 1 = 20
+mlr_walk_forward_splits(n, 252, 21, 21, 20, 21, 0, NULL, 0, &count);   // purge = h - 1 = 20
+if (count == 0) { /* not enough data for one split */ }
 mlr_split *splits = malloc(count * sizeof *splits);
-mlr_walk_forward_splits(n, 252, 21, 21, 20, 0, 0, splits, count, &count);
+if (mlr_walk_forward_splits(n, 252, 21, 21, 20, 21, 0, splits, count, &count) != MLR_OK) { /* handle */ }
 for (size_t i = 0; i < count; i++) {
     // train on [splits[i].train_start, splits[i].train_end)
     // test on  [splits[i].test_start,  splits[i].test_end)
@@ -95,11 +99,13 @@ free(splits);
 
 **The API does not make the wrong thing easy where it can help it.** Output arrays are declared `restrict` and documented as non-aliasing, because every streaming function reads its input while it writes (passing the same buffer twice corrupts the result, which is the kind of thing that only shows up in production). A leverage cap whose `equity * max_leverage` overflows is rejected rather than silently never applied. And continuing a fitted GARCH onto new data has its own entry point, `mlr_garch_filter_from(model, model.sigma2_next, ...)`, which reproduces the tail of the full filter bit for bit; the plain filter on the new data alone restarts from the backcast and is off by tens of percent for the first few dozen periods, so the header says so.
 
-**Bad arguments refuse the call, bad elements mark the element.** Non-finite scalars (`target_vol`, `equity`, `max_leverage`, `lambda`, `ridge`, `max_dd`) and non-finite inputs to the fitters (`mlr_garch_fit`, `mlr_kelly_fraction`, `mlr_drawdown_scale`, `mlr_linreg_fit`) return `MLR_EINVAL`. Per-element inputs to the streaming functions (a bad price, a bar with `high < low`) produce a NaN or a zero at that index with `MLR_OK`.
+**Bad arguments refuse the call; bad elements are handled per function, and the rule is written down.** Non-finite scalars (`target_vol`, `equity`, `max_leverage`, `lambda`, `ridge`, `max_dd`, `fraction`, `sigma2_first`) return `MLR_EINVAL`. What a non-finite element does is one of five documented policies, tabulated under Conventions.
+
+**The fit, the likelihood and the filter share one recursion step.** `omega + alpha*r*r + beta*s2` and `omega + alpha*(r*r) + beta*s2` differ by an ulp on about a third of steps, and when the fit computed `sigma2_next` one way and the filter stepped the other, the documented bit-exact continuation failed for 12% of fit samples (24 of 200) by one ulp that then propagated. One `garch_step` function now serves all three, and the continuation is checked across 60 fits in C and 60 more in the reference suite.
 
 **The tests were mutation-tested.** Eleven deliberate breakages (drop the ridge term, drop the offset shift, drop the predict dimension check, drop each overflow guard, revert the optimizer criterion, revert the EWMA alignment, and so on) were compiled against the suite; ten failed at least one assertion and the eleventh is unreachable through the public API because inputs are validated before the solver sees them.
 
-**Every function is fed garbage on every run.** `tests/test_fuzz.c` runs 4000 rounds of 17 calls covering the whole API with random sizes and contents (NaN, Inf, denormals, 1e308, negative zero, `SIZE_MAX` arguments) under AddressSanitizer and UBSan in CI, and checks the promises rather than the numbers: no crash, only documented status codes, positions finite and under the cap, filter output never Inf. Its first run found two holes: a denormal price made `equity / price` overflow past the leverage cap, and a hand-built model with omega near 1e308 made the filter emit Inf with `MLR_OK`. Both now fail closed (zero position; `MLR_EDOMAIN`).
+**Every function is fed garbage on every run.** `tests/test_fuzz.c` runs 4000 rounds, 13 to 18 calls each, covering the whole API with random sizes and contents (NaN, Inf, denormals, 1e308, negative zero, `SIZE_MAX` arguments) under AddressSanitizer and UBSan in CI, and checks the promises rather than the numbers: no crash, only documented status codes, positions finite and under the cap, filter output never Inf, a failed fit leaves the model unfitted. Every fourth round is clean so the functions that demand all-finite input are reached on their success paths too (676 GARCH fits, about a thousand each of Kelly and ridge, per run); the first version of the sweep never once fitted a GARCH model, because an all-finite draw of a hundred values had probability 9e-6. Its findings so far: a denormal price made `equity / price` overflow past the leverage cap, and a hand-built model with omega near 1e308 made the filter emit Inf with `MLR_OK`. Both fail closed now (zero position; `MLR_EDOMAIN`).
 
 ## Real data
 
@@ -120,7 +126,7 @@ The 1-minute BTC series (45,030 returns, rms 1e-3) is the case that broke 2.x: o
 
 ## Performance
 
-`bench/bench.c` (built with the examples, run `./build/mlrisk_bench`). Apple M-series, clang, `-O2`, best of 3:
+`bench/bench.c` (configure with `-DMLRISK_BUILD_BENCH=ON`, run `./build/mlrisk_bench`). Apple M-series, clang, `-O3`, best of 5:
 
 | Function | n | Time | ns per element |
 |---|---|---|---|
@@ -136,11 +142,23 @@ Each streaming row is within 10% of ten times the row for a tenth of n. The fit 
 
 Volatility is **per period** everywhere. Annualized to per-period: divide by `sqrt(periods_per_year)` (252 daily, 52 weekly, 12 monthly).
 
-`mlr_rolling_std` is population variance (divides by `window`; pandas `rolling().std()` defaults to the sample convention). `mlr_kelly_fraction` uses sample variance (`n-1`) and the raw mean, not the excess over a funding rate. `mlr_garch_fit` is Gaussian MLE on mean-zero returns; the recursion starts from `sigma2[0] = omega + (alpha + beta) * backcast`, the same presample rule as `arch`. Alpha and beta are scale invariant; omega scales with the variance of the returns.
+`mlr_rolling_std` is population variance (divides by `window`; pandas `rolling().std()` defaults to the sample convention). `mlr_kelly_fraction` uses sample variance (`n-1`) and the raw mean, not the excess over a funding rate. `mlr_garch_fit` is Gaussian MLE on mean-zero returns, so demean with the training-window mean before fitting and filtering; the recursion starts from `sigma2[0] = omega + (alpha + beta) * backcast`, the same presample rule as `arch`. Alpha and beta are scale invariant; omega scales with the variance of the returns.
+
+Non-finite elements follow one of five policies, each stated in the function's header:
+
+| Policy | Functions |
+|---|---|
+| Reject the whole call with `MLR_EINVAL` | `mlr_garch_fit`, `mlr_kelly_fraction`, `mlr_drawdown_scale`, `mlr_linreg_fit` |
+| NaN at that index, `MLR_OK` | `mlr_rolling_mean`, `mlr_rolling_std`, `mlr_parkinson_vol`, `mlr_garman_klass_vol` |
+| Skip the element, carry the state, forecast unchanged | `mlr_ewma_vol`, `mlr_garch_filter`, `mlr_garch_filter_from` |
+| Zero position at that index | `mlr_vol_target_position` |
+| Not checked; propagates | `mlr_linreg_predict` |
+
+Three more contracts a caller has to know. `n == 0` is `MLR_EINVAL` everywhere except `mlr_walk_forward_splits`, where it yields zero splits; empty input is not an empty result. Every `size_t` count is trusted, so a negative value converted to `size_t` walks off the buffer. And `backcast == 0` in `mlr_garch` is a sentinel for the unconditional variance, so a hand-built model with the field left at zero seeds from `omega / (1 - alpha - beta)`; `sigma2_next` has no such sentinel and must be set before forecasting. Output arrays must never alias inputs (`MLR_RESTRICT`).
 
 For labels built from `h` periods, the last `h-1` training samples before a test window have labels that overlap it, so pass `purge = h - 1`. The optional post-test training segment runs to the end of the data and therefore contains every later split's test window; it exists for purged-CV model selection and using it for anything the evaluation depends on invalidates that split and every one after it.
 
-Range estimators (`mlr_parkinson_vol`, `mlr_garman_klass_vol`) are per bar and contemporaneous by construction; lag them one bar before sizing. On a consistent bar (open and close inside `[low, high]`) Garman-Klass is never negative, because `|ln(close/open)| <= ln(high/low)` bounds the estimator below by `0.114 * ln(high/low)^2`; inconsistent bars give NaN.
+Range estimators (`mlr_parkinson_vol`, `mlr_garman_klass_vol`) and the rolling statistics (`mlr_rolling_mean`, `mlr_rolling_std`) are contemporaneous by construction, index `t` includes period `t`; lag them one bar before sizing. On a consistent bar (open and close inside `[low, high]`) Garman-Klass is never negative, because `|ln(close/open)| <= ln(high/low)` bounds the estimator below by `0.114 * ln(high/low)^2`; inconsistent bars give NaN.
 
 > mlrisk is a set of building blocks, not a backtester and not a portfolio system. It does not know about transaction costs, borrow, calendars, or corporate actions, and the example's PnL is on constant equity with no compounding. `mlr_kelly_fraction` is the textbook mean-over-variance number from a historical sample: an upper bound on sizing, not an allocation model, and it will happily tell you to lever up on a lucky sample. `converged == 1` from the GARCH fitter means the optimizer met its tolerances, not that three parameters are identified by your sample; on 20 observations it will happily converge to a unit root, which is why it insists on 100.
 
@@ -159,12 +177,12 @@ Range estimators (`mlr_parkinson_vol`, `mlr_garman_klass_vol`) are per bar and c
 | Kelly, drawdown scaling, vol targeting with cap | numpy | 4.4e-15, exact, 4.6e-13 |
 | Ridge, d in 1..8, ridge 0..10, features 1e-6..1e6 | scikit-learn and closed form | 8.3e-15 of std(y) |
 | Ridge on designs with condition number 1e4 to 1e10 | SVD least squares | 1x cond times epsilon (2.8e-8 at 1e8) |
-| GARCH continuation with `mlr_garch_filter_from` | tail of the full filter | bit-identical |
 | Walk-forward splits, 1620 parameter sets | independent generator | 0 mismatches |
+| Purge rule, labels spanning 2, 5 and 21 periods | leakage counted by construction | purge = h-1 clean, h-2 leaks |
 | No lookahead, 40 trials, 4 functions | bitwise prefix comparison | 0 violations |
 | Vol-targeting loop, 50 seeds, 4 folds | realized vol / target | mean 1.005, sd 0.067 |
 | Example binary PnL, seed 42 | recomputed from raw arrays | within 0.004 currency units |
-| Randomized API sweep, 4000 rounds of 17 calls | ASan and UBSan, contract assertions | no findings after the two fixes above |
+| GARCH continuation from `sigma2_next`, 60 fits | tail of the full filter | bit-identical |
 
 GARCH(1,1) parameter recovery, 200 simulated series per row, truth alpha 0.10, beta 0.85:
 
@@ -190,13 +208,14 @@ The headers are the documentation.
 | `mlr_drawdown_scale` | `sizing.h` | Linear exposure scaling by drawdown |
 | `mlr_walk_forward_splits` | `split.h` | Purged, embargoed walk-forward splits |
 | `mlr_lin_model_init`, `mlr_linreg_fit`, `mlr_linreg_predict`, `mlr_lin_model_free` | `linreg.h` | Ridge regression |
-| `MLRISK_VERSION` | `version.h` | Version macros (generated) |
+| `mlr_version`, `mlr_version_number`, `MLRISK_VERSION` | `version.h` | Version at runtime (for bindings that load the binary) and as macros |
+| `MLR_GARCH_MIN_N`, `MLR_GARCH_MAX_PERSISTENCE` | `vol.h` | The fitter's sample floor and the persistence bound, as constants a caller can check against |
 
 Every function returns `mlr_status`: `MLR_OK`, `MLR_EINVAL`, `MLR_ENOMEM`, `MLR_EBOUNDS` (split capacity too small; the required count is still reported), `MLR_EDOMAIN` (singular system, zero variance, overflow, non-positive equity).
 
 ## Changelog
 
-[CHANGELOG.md](CHANGELOG.md). 3.0.0 unified the timing convention and was a breaking release; 3.1.0 is the verification pass that produced most of the numbers above; 3.2.0 replaced the regression solver with QR and closed the extreme-input and misuse paths found in a second review.
+[CHANGELOG.md](CHANGELOG.md). 3.0.0 unified the timing convention and was a breaking release; 3.1.0 is the verification pass that produced most of the numbers above; 3.2.0 replaced the regression solver with QR and closed the extreme-input and misuse paths found in a second review; 3.3.0 is the pre-binding pass: one recursion step, a fitted flag, a version symbol, and the contracts above written down.
 
 ## License
 

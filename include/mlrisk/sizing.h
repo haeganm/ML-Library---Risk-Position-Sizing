@@ -15,9 +15,11 @@
  * information available at the close of t-1. position_out[t] is then the
  * position (in units) entered at the close of t-1 at price[t-1] and held
  * over period t, so its PnL is position_out[t] * price[t-1] * returns[t].
- * Pass price[t-1] as the price for index t. mlr_ewma_vol and
- * mlr_garch_filter already produce forecasts aligned this way; per-bar
- * range estimators must be lagged one bar first.
+ * Pass price[t-1] as the price for index t. mlr_ewma_vol, mlr_garch_filter
+ * and mlr_garch_filter_from already produce forecasts aligned this way.
+ * mlr_rolling_std, mlr_rolling_mean and the per-bar range estimators are
+ * contemporaneous (index t includes period t) and must be lagged one bar
+ * first. Output arrays must not alias inputs (MLR_RESTRICT, types.h).
  */
 
 #ifdef __cplusplus

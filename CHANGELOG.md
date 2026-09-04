@@ -1,5 +1,82 @@
 # Changelog
 
+## 3.3.0 (2026-09-04)
+
+The last pass before the C API is frozen for language bindings. Three
+reviewers who had not seen the code read it; nine of their findings
+reproduced and are fixed here.
+
+### Fixed
+
+- The GARCH recursion was written three ways: the likelihood and the fit's
+  `sigma2_next` loop as `omega + alpha*r*r + beta*s2`, the filter as
+  `omega + alpha*(r*r) + beta*s2`. The two differ by an ulp on about a third
+  of steps, so for 12% of fit samples `sigma2_next` was not the value the
+  filter reached and the documented bit-exact `mlr_garch_filter_from`
+  continuation failed by an ulp. One `garch_step` now serves all three;
+  the continuation is tested across 60 fits.
+- `mlr_garch_forecast` accepted `sigma2_next == 0` (the value in a
+  hand-built model that never set it) and forecast zero volatility with
+  `MLR_OK`. Now `MLR_EINVAL`, matching `mlr_garch_filter_from`.
+- `mlr_linreg_fit` wrote weights into the model during back-substitution
+  and the intercept before checking it, so a failing fit left a half-new
+  model behind. It now solves into scratch and touches the model only on
+  success; the header says "on any failure the model is left exactly as it
+  was".
+- `mlr_linreg_predict` on a model that was initialized but never fitted
+  returned all zeros with `MLR_OK`. `mlr_lin_model` gained a `fitted` field
+  (set by a successful fit, cleared by init and free) and predict requires
+  it. Recompile consumers: the struct grew.
+- The installed `mlrisk.pc` located the prefix as `${pcfiledir}/../..`,
+  which is wrong when `CMAKE_INSTALL_LIBDIR` is two levels deep
+  (`lib/x86_64-linux-gnu`, the Debian and Ubuntu default under `/usr`).
+  The relative path is now computed at configure time.
+- `mlr_walk_forward_splits` did not write `*count_out` on its `MLR_EINVAL`
+  paths; it now writes 0.
+- The fuzz sweep never fitted a GARCH model: every element was non-finite
+  with probability 0.11 and the fit needs 100 finite returns, so the
+  success path had probability 9e-6 per round. Every fourth round is now
+  clean, split parameters can hit every status code, and the sweep asserts
+  that the success paths were reached.
+- The C11 language requirement was exported to consumers through
+  `target_compile_features(PUBLIC)`; the public headers need only C99, so
+  it is now private. MSVC builds add `/fp:contract-`, the real counterpart
+  of `-ffp-contract=off`. The 32-bit CI leg uses SSE math instead of x87.
+- Documentation that no longer matched the code: `linreg.h` described the
+  pre-3.2.0 normal-equation solver; `sizing.h`'s lag-before-sizing warning
+  omitted the rolling statistics, which are contemporaneous; "with
+  ridge > 0 the system is always solvable" was overstated; `mlr_linreg_fit`
+  called its in/out model `model_out`.
+
+### Added
+
+- `mlr_version()` and `mlr_version_number()`, so a binding that loads the
+  compiled library can check what it loaded (the reference suite now does).
+- `MLR_GARCH_MIN_N` and `MLR_GARCH_MAX_PERSISTENCE` as public constants.
+- Header contracts a binding author asked for: partially written output on
+  `MLR_EDOMAIN`, count-query mode keyed on the pointer, the `backcast == 0`
+  sentinel, `converged` exactly 0 or 1, the model owning `w` and not being
+  copyable, `mlr_ewma_vol` all-NaN when no usable return precedes the last
+  index, the lag warning on each range estimator. README Conventions now
+  tabulates the five non-finite-element policies and states the `n == 0`
+  and trusted-`size_t` rules.
+- `MLRISK_BUILD_BENCH` option (default off); the benchmark is no longer
+  built with the examples.
+- A reference check that the purge rule is exactly the leakage boundary:
+  with labels spanning h periods, purge = h-1 leaves no training label
+  inside the test window and purge = h-2 does, for h = 2, 5 and 21.
+- The README says to demean with the training-window mean before fitting
+  (the full-sample mean is a lookahead) and quantifies the drift bias.
+
+### Changed
+
+- Size-overflow rejections in `mlr_lin_model_init` and `mlr_linreg_fit`
+  return `MLR_EINVAL` (a dimension that cannot be sized is bad input);
+  `MLR_ENOMEM` is reserved for a real allocation failure.
+- `tests/reference/requirements.txt` pins `statsmodels`; the reference
+  build uses `-O3` to match the CMake Release build.
+
+
 ## 3.2.0 (2026-09-04)
 
 A second review (by a reader who had not seen the code before) named six
@@ -101,7 +178,7 @@ of contract gaps.
 
 ### Added
 
-- `tests/reference/reference_check.py`: 20 checks of the compiled C against
+- `tests/reference/reference_check.py`: 19 checks of the compiled C against
   pandas, numpy, scikit-learn, `arch`, exact rational arithmetic, an
   independent split generator, a bitwise no-lookahead sweep, a 400-fit
   GARCH Monte Carlo, and a reconciliation of the example's printed PnL.

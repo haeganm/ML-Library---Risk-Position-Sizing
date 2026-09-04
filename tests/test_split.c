@@ -112,6 +112,8 @@ static int test_split_invalid_inputs(void) {
 
     ASSERT(mlr_walk_forward_splits(100, 20, 10, 5, 0, 0, 0, splits, 4, NULL) == MLR_EINVAL, "NULL count_out");
     ASSERT(mlr_walk_forward_splits(100, 0, 10, 5, 0, 0, 0, splits, 4, &count) == MLR_EINVAL, "train_len=0");
+    ASSERT(count == 0, "count_out is written (0) on EINVAL");
+    count = 123;
     ASSERT(mlr_walk_forward_splits(100, 20, 0, 5, 0, 0, 0, splits, 4, &count) == MLR_EINVAL, "test_len=0");
     ASSERT(mlr_walk_forward_splits(100, 20, 10, 0, 0, 0, 0, splits, 4, &count) == MLR_EINVAL, "step=0");
     ASSERT(mlr_walk_forward_splits(100, 20, 10, 5, 20, 0, 0, splits, 4, &count) == MLR_EINVAL, "purge >= train_len");

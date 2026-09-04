@@ -15,6 +15,7 @@ mlr_status mlr_walk_forward_splits(
     if (count_out == NULL) {
         return MLR_EINVAL;
     }
+    *count_out = 0;
     if (train_len == 0 || test_len == 0 || step == 0) {
         return MLR_EINVAL;
     }

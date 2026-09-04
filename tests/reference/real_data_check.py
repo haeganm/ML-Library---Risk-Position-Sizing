@@ -14,24 +14,25 @@ quoted in the README came from this script.
 
 from __future__ import annotations
 
-import os
 import sys
 import math
 import pathlib
+import warnings
 
 import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from reference_check import (L, Garch, garch_fit, garch_filter, ewma, rolling_std, vol_target,  # noqa: E402
-                             splits, arr, ptr, OK, max_abs)
+                             splits, arr, ptr, OK)
 
 
 def load(path):
     df = pd.read_csv(path)
     df.columns = [c.strip().lower() for c in df.columns]
-    date_col = "date" if "date" in df.columns else df.columns[0]
-    df = df.set_index(pd.to_datetime(df[date_col])).sort_index()
+    if "date" not in df.columns:
+        raise SystemExit(f"{path}: no Date column")
+    df = df.set_index(pd.to_datetime(df["date"])).sort_index()
     return df[["open", "high", "low", "close"]].astype(float).dropna()
 
 
@@ -94,4 +95,6 @@ def main(paths):
 
 
 if __name__ == "__main__":
+    warnings.simplefilter("ignore", RuntimeWarning)
+    np.seterr(all="ignore")
     main(sys.argv[1:])

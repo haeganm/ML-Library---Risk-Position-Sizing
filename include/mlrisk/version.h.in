@@ -6,4 +6,19 @@
 #define MLRISK_VERSION_PATCH @PROJECT_VERSION_PATCH@
 #define MLRISK_VERSION "@PROJECT_VERSION@"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/** Version of the compiled library, "major.minor.patch", for callers that
+ *  load the binary and cannot see the macros (language bindings) */
+const char *mlr_version(void);
+
+/** The same as an integer: major * 10000 + minor * 100 + patch */
+int mlr_version_number(void);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* MLRISK_VERSION_H */

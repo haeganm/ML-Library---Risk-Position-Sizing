@@ -152,6 +152,8 @@ static int test_garch_forecast(void) {
     ASSERT(mlr_garch_forecast(&model, 1, sigma) == MLR_EINVAL, "NAN sigma2_next -> EINVAL");
     model.sigma2_next = -1.0;
     ASSERT(mlr_garch_forecast(&model, 1, sigma) == MLR_EINVAL, "negative sigma2_next -> EINVAL");
+    model.sigma2_next = 0.0;
+    ASSERT(mlr_garch_forecast(&model, 1, sigma) == MLR_EINVAL, "zero sigma2_next (unset hand-built model) -> EINVAL");
     model.sigma2_next = 2.5;
     model.alpha = -0.1;
     ASSERT(mlr_garch_forecast(&model, 1, sigma) == MLR_EINVAL, "bad params -> EINVAL");
@@ -243,8 +245,7 @@ static int test_garch_fit_matches_arch(void) {
         ASSERT_NEAR(model.alpha, k->ref_alpha, 1e-5, "alpha matches arch");
         ASSERT_NEAR(model.beta, k->ref_beta, 1e-5, "beta matches arch");
         ASSERT_NEAR(model.omega / k->ref_omega, 1.0, 1e-4, "omega matches arch");
-        ASSERT(model.loglik >= k->ref_loglik - 1e-5, "loglik not below arch");
-        ASSERT(model.loglik <= k->ref_loglik + 1e-3, "loglik not above arch beyond tolerance");
+        ASSERT_NEAR(model.loglik, k->ref_loglik, 1e-8 * fabs(k->ref_loglik), "loglik matches arch (same objective)");
     }
     PASS("garch fit matches arch reference");
 }
@@ -339,6 +340,19 @@ static int test_garch_filter_no_lookahead(void) {
     }
     ASSERT(mlr_garch_filter(&model, returns + HALF, HALF, alone) == MLR_OK, "filter of the tail alone OK");
     ASSERT(alone[0] != full[HALF], "filtering the tail alone restarts from the backcast");
+
+    // sigma2_next and the filter share one recursion step, so the tail is
+    // bit-identical for every fit sample, checked across seeds
+    for (unsigned long long seed = 1; seed <= 60; seed++) {
+        simulate_garch(seed, 3e-6, 0.08, 0.90, N, returns);
+        mlr_garch m;
+        ASSERT(mlr_garch_fit(returns, HALF, &m) == MLR_OK, "seeded fit OK");
+        ASSERT(mlr_garch_filter(&m, returns, N, full) == MLR_OK, "seeded full filter OK");
+        ASSERT(mlr_garch_filter_from(&m, m.sigma2_next, returns + HALF, HALF, cont) == MLR_OK, "seeded continuation OK");
+        for (size_t t = 0; t < HALF; t++) {
+            ASSERT(cont[t] == full[HALF + t], "continuation is bit-identical for every seed");
+        }
+    }
 
     ASSERT(mlr_garch_filter_from(&model, 0.0, returns, HALF, cont) == MLR_EINVAL, "sigma2_first=0 -> EINVAL");
     ASSERT(mlr_garch_filter_from(&model, MLR_NAN, returns, HALF, cont) == MLR_EINVAL, "NAN sigma2_first -> EINVAL");

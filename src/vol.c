@@ -5,11 +5,16 @@
 
 /* ---------------- GARCH(1,1) ---------------- */
 
-#define GARCH_MIN_N 100
-
 static int garch_params_valid(double omega, double alpha, double beta) {
     return mlr_isfinite(omega) && omega > 0.0 &&
-           alpha >= 0.0 && beta >= 0.0 && alpha + beta < 0.9999;
+           alpha >= 0.0 && beta >= 0.0 && alpha + beta < MLR_GARCH_MAX_PERSISTENCE;
+}
+
+// The one recursion step, used by the likelihood, the fit and the filters.
+// A single definition matters: alpha * r * r and alpha * (r * r) differ by an
+// ulp often enough that sigma2_next would not match the filter's own path.
+static double garch_step(double omega, double alpha, double beta, double r2, double s2) {
+    return omega + alpha * r2 + beta * s2;
 }
 
 // First conditional variance from the pre-sample variance: the recursion
@@ -29,8 +34,9 @@ static double garch_nll(const double *r, size_t n, double backcast,
     double s2 = garch_seed(omega, alpha, beta, backcast);
     double nll = 0.0;
     for (size_t t = 0; t < n; t++) {
-        nll += log(s2) + (r[t] * r[t]) / s2;
-        s2 = omega + alpha * r[t] * r[t] + beta * s2;
+        double r2 = r[t] * r[t];
+        nll += log(s2) + r2 / s2;
+        s2 = garch_step(omega, alpha, beta, r2, s2);
     }
     return 0.5 * nll;
 }
@@ -159,7 +165,7 @@ mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out) 
     if (returns == NULL || model_out == NULL) {
         return MLR_EINVAL;
     }
-    if (n < GARCH_MIN_N) {
+    if (n < MLR_GARCH_MIN_N) {
         return MLR_EINVAL;
     }
 
@@ -244,7 +250,7 @@ mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out) 
 
     double s2 = garch_seed(best[0], best[1], best[2], backcast);
     for (size_t t = 0; t < n; t++) {
-        s2 = best[0] + best[1] * returns[t] * returns[t] + best[2] * s2;
+        s2 = garch_step(best[0], best[1], best[2], returns[t] * returns[t], s2);
     }
     model_out->sigma2_next = s2;
 
@@ -266,7 +272,7 @@ static mlr_status garch_run(const mlr_garch *model, double s2, const double *ret
         if (!mlr_isfinite(r2)) {
             r2 = s2;
         }
-        s2 = model->omega + model->alpha * r2 + model->beta * s2;
+        s2 = garch_step(model->omega, model->alpha, model->beta, r2, s2);
     }
 
     return MLR_OK;
@@ -313,7 +319,7 @@ mlr_status mlr_garch_forecast(const mlr_garch *model, size_t horizon, double *ML
     if (!garch_params_valid(model->omega, model->alpha, model->beta)) {
         return MLR_EINVAL;
     }
-    if (model->sigma2_next < 0.0 || !mlr_isfinite(model->sigma2_next)) {
+    if (!mlr_isfinite(model->sigma2_next) || model->sigma2_next <= 0.0) {
         return MLR_EINVAL;
     }
 

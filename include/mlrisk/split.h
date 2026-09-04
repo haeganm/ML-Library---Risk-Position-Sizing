@@ -53,7 +53,10 @@ typedef struct {
  * walk-forward; post segments are then always empty.
  *
  * Count-query mode: pass splits_out == NULL to receive the required split
- * count in *count_out without writing any splits.
+ * count in *count_out without writing any splits. The mode is chosen by the
+ * pointer alone: a zero-length buffer must still be passed as a non-NULL
+ * pointer (with capacity 0) to get MLR_EBOUNDS rather than a count query.
+ * *count_out is written on every return, 0 on MLR_EINVAL.
  *
  *   size_t count;
  *   mlr_walk_forward_splits(n, 252, 21, 21, 20, 21, 0, NULL, 0, &count);

@@ -1,6 +1,6 @@
 // Timing of the streaming functions and the GARCH fit at increasing n. The
 // point is the scaling column: an O(n) function shows a ratio near 10 when n
-// grows tenfold. Usage: mlrisk_bench [repeats]
+// grows tenfold. Build with -DMLRISK_BUILD_BENCH=ON. Usage: mlrisk_bench [repeats]
 #include "mlrisk/mlrisk.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,7 +9,10 @@
 
 static double now(void) {
     struct timespec ts;
-    timespec_get(&ts, TIME_UTC);
+    if (timespec_get(&ts, TIME_UTC) != TIME_UTC) {
+        fprintf(stderr, "timespec_get failed\n");
+        exit(1);
+    }
     return (double)ts.tv_sec + 1e-9 * (double)ts.tv_nsec;
 }
 
@@ -27,7 +30,14 @@ static void b_rolling_std(const double *x, size_t n, double *out) { mlr_rolling_
 static void b_ewma(const double *x, size_t n, double *out) { mlr_ewma_vol(x, n, 0.94, out); }
 static mlr_garch g_model;
 static void b_filter(const double *x, size_t n, double *out) { mlr_garch_filter(&g_model, x, n, out); }
-static void b_fit(const double *x, size_t n, double *out) { mlr_garch model; mlr_garch_fit(x, n, &model); out[0] = model.alpha; }
+static void b_fit(const double *x, size_t n, double *out) {
+    mlr_garch model = {0};
+    if (mlr_garch_fit(x, n, &model) != MLR_OK) {
+        fprintf(stderr, "garch_fit failed at n=%zu\n", n);
+        exit(1);
+    }
+    out[0] = model.alpha;
+}
 
 static double best_of(bench_fn f, const double *x, size_t n, double *out, int repeats) {
     double best = 1e300;
@@ -56,7 +66,7 @@ int main(int argc, char **argv) {
         {"garch_filter", b_filter, {100000, 1000000, 10000000}},
         {"garch_fit", b_fit, {1000, 10000, 100000}},
     };
-    printf("%-20s %10s %12s %10s %8s   (best of %d)\n", "function", "n", "time", "ns/elem", "ratio", repeats);
+    printf("%-20s %10s %13s %10s %8s   (best of %d)\n", "function", "n", "time", "ns/elem", "ratio", repeats);
     for (size_t k = 0; k < sizeof table / sizeof table[0]; k++) {
         double prev = 0.0;
         for (int s = 0; s < 3; s++) {

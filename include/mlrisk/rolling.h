@@ -10,11 +10,14 @@
  *
  * Output arrays must not alias inputs (see MLR_RESTRICT in types.h).
  *
- * Trailing windows: out[i] is computed from x[i-window+1..i]. Indices without
- * a full window are MLR_NAN. A non-finite input (missing data) makes every
- * window containing it MLR_NAN; output recovers once the value leaves the
- * window. Population variance throughout (divides by window; pandas
- * rolling().std() defaults to the sample convention).
+ * Trailing windows: out[i] is computed from x[i-window+1..i], which includes
+ * x[i]. A rolling statistic at index t therefore knows period t; lag it one
+ * bar before using it to size a position held over period t (mlr_ewma_vol
+ * below is already aligned that way). Indices without a full window are
+ * MLR_NAN, and window > n gives all MLR_NAN with MLR_OK. A non-finite input
+ * (missing data) makes every window containing it MLR_NAN; output recovers
+ * once the value leaves the window. Population variance throughout (divides
+ * by window; pandas rolling().std() defaults to the sample convention).
  */
 
 #ifdef __cplusplus
@@ -56,7 +59,9 @@ mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *MLR
  *
  * so position sizes computed from out[t] can be applied to returns[t]
  * without lookahead. The first usable return r[s] (finite, with a finite
- * square) seeds the variance: out[0..s] are MLR_NAN and out[s+1] = |r[s]|. That seed is a single
+ * square) seeds the variance: out[0..s] are MLR_NAN and out[s+1] = |r[s]|.
+ * If no usable return precedes the last index (n == 1, say) every output is
+ * MLR_NAN and the call still returns MLR_OK. That seed is a single
  * observation; at lambda 0.94 its weight decays below 5% after about 50
  * periods, so treat the start of the series as warmup.
  *

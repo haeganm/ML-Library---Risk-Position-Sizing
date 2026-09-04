@@ -165,6 +165,40 @@ static int test_linreg_ill_conditioned(void) {
     PASS("linreg ill-conditioned");
 }
 
+static int test_linreg_failure_leaves_model_unchanged(void) {
+    double X[] = {0.0, 1.0, 2.0, 3.0, 4.0};
+    double y[] = {1.0, 3.0, 5.0, 7.0, 9.0};
+    mlr_lin_model model;
+    ASSERT(mlr_lin_model_init(&model, 1) == MLR_OK, "init OK");
+    ASSERT(model.fitted == 0, "not fitted after init");
+    double out[1];
+    ASSERT(mlr_linreg_predict(X, 1, 1, &model, out) == MLR_EINVAL, "predict on an unfitted model -> EINVAL");
+
+    ASSERT(mlr_linreg_fit(X, y, 5, 1, 0.0, &model) == MLR_OK, "good fit OK");
+    ASSERT(model.fitted == 1, "fitted after a successful fit");
+
+    // A solve that succeeds with finite weights but whose intercept (the
+    // fitted value at x = 0, a long extrapolation here) overflows: the
+    // failure after the solve, the last point where the model could be
+    // touched. y = 1e307 - 2e305 * (x - 1002) on x = 1000..1004 keeps every
+    // sum finite, gives w = -2e305, and b = 1e307 + 1002 * 2e305 is not finite.
+    double X_far[] = {1000.0, 1001.0, 1002.0, 1003.0, 1004.0};
+    double y_huge[] = {1.04e307, 1.02e307, 1.00e307, 0.98e307, 0.96e307};
+    ASSERT(mlr_linreg_fit(X_far, y_huge, 5, 1, 0.0, &model) == MLR_EDOMAIN, "overflowing intercept -> EDOMAIN");
+    ASSERT_NEAR(model.w[0], 2.0, TOL, "weights untouched by the failed fit");
+    ASSERT_NEAR(model.b, 1.0, TOL, "intercept untouched by the failed fit");
+    ASSERT(model.ridge == 0.0 && model.fitted == 1, "ridge and fitted untouched by the failed fit");
+
+    // Features that overflow the design fail before the solve
+    double X_huge[] = {0.0, 1e200, 2e200, 3e200, 4e200};
+    ASSERT(mlr_linreg_fit(X_huge, y, 5, 1, 0.5, &model) == MLR_EDOMAIN, "overflowing design -> EDOMAIN");
+    ASSERT_NEAR(model.w[0], 2.0, TOL, "weights untouched again");
+
+    mlr_lin_model_free(&model);
+    ASSERT(model.fitted == 0, "not fitted after free");
+    PASS("linreg failure leaves the model unchanged");
+}
+
 static int test_linreg_underdetermined(void) {
     // n <= d with no ridge is rank deficient
     double X[] = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
@@ -189,10 +223,11 @@ static int test_lin_model_init_free(void) {
 
     ASSERT(mlr_lin_model_init(NULL, 5) == MLR_EINVAL, "NULL model -> EINVAL");
     ASSERT(mlr_lin_model_init(&model, 0) == MLR_EINVAL, "d=0 -> EINVAL");
+    ASSERT(model.w == NULL && model.d == 0 && model.fitted == 0, "model left empty after EINVAL");
 
-    // An allocation that cannot succeed (d * sizeof(double) overflows size_t)
-    ASSERT(mlr_lin_model_init(&model, SIZE_MAX / 2) == MLR_ENOMEM, "impossible allocation -> ENOMEM");
-    ASSERT(model.w == NULL && model.d == 0, "model left empty after ENOMEM");
+    // A dimension whose weight vector cannot be sized is invalid input
+    ASSERT(mlr_lin_model_init(&model, SIZE_MAX / 2) == MLR_EINVAL, "unsizeable dimension -> EINVAL");
+    ASSERT(model.w == NULL && model.d == 0 && model.fitted == 0, "model left empty after EINVAL");
 
 #if SIZE_MAX <= 0xFFFFFFFFu
     // 32-bit size_t: a model that fits in memory but whose ridge-augmented
@@ -202,7 +237,7 @@ static int test_lin_model_init_free(void) {
     static double X2[2 * BIG_D];
     double y2[] = {1.0, 2.0};
     ASSERT(mlr_lin_model_init(&model, BIG_D) == MLR_OK, "init d=2^16 OK");
-    ASSERT(mlr_linreg_fit(X2, y2, 2, BIG_D, 1.0, &model) == MLR_ENOMEM, "unallocatable design -> ENOMEM");
+    ASSERT(mlr_linreg_fit(X2, y2, 2, BIG_D, 1.0, &model) == MLR_EINVAL, "unsizeable design -> EINVAL");
     mlr_lin_model_free(&model);
 #endif
     PASS("lin_model init/free");
@@ -216,6 +251,7 @@ int test_linreg(void) {
     failures += test_linreg_scale_invariance();
     failures += test_linreg_invalid_inputs();
     failures += test_linreg_ill_conditioned();
+    failures += test_linreg_failure_leaves_model_unchanged();
     failures += test_linreg_underdetermined();
     failures += test_lin_model_init_free();
     return failures;

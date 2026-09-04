@@ -5,23 +5,23 @@
 #include <float.h>
 
 mlr_status mlr_lin_model_init(mlr_lin_model *model, size_t d) {
-    if (model == NULL || d == 0) {
+    if (model == NULL) {
         return MLR_EINVAL;
     }
-    if (d > SIZE_MAX / sizeof(double)) {
-        model->w = NULL;
-        model->d = 0;
-        return MLR_ENOMEM;
+    model->w = NULL;
+    model->d = 0;
+    model->b = 0.0;
+    model->ridge = 0.0;
+    model->fitted = 0;
+    if (d == 0 || d > SIZE_MAX / sizeof(double)) {
+        return MLR_EINVAL;
     }
 
     model->w = (double *)calloc(d, sizeof(double));
     if (model->w == NULL) {
-        model->d = 0;
         return MLR_ENOMEM;
     }
     model->d = d;
-    model->b = 0.0;
-    model->ridge = 0.0;
     return MLR_OK;
 }
 
@@ -30,6 +30,7 @@ void mlr_lin_model_free(mlr_lin_model *model) {
         free(model->w);
         model->w = NULL;
         model->d = 0;
+        model->fitted = 0;
     }
 }
 
@@ -96,21 +97,22 @@ mlr_status mlr_linreg_fit(
     size_t n,
     size_t d,
     double ridge,
-    mlr_lin_model *model_out
+    mlr_lin_model *model
 ) {
-    if (X == NULL || y == NULL || model_out == NULL || n == 0 || d == 0) {
+    if (X == NULL || y == NULL || model == NULL || n == 0 || d == 0) {
         return MLR_EINVAL;
     }
-    if (model_out->d != d || model_out->w == NULL) {
+    if (model->d != d || model->w == NULL) {
         return MLR_EINVAL;
     }
     if (!mlr_isfinite(ridge) || ridge < 0.0) {
         return MLR_EINVAL;
     }
-    // Sizes are checked before any arithmetic on them can wrap
+    // Dimensions whose work arrays cannot be sized are invalid input, and
+    // are rejected before any arithmetic on them can wrap
     size_t rows = n + (ridge > 0.0 ? d : 0);
     if (n > SIZE_MAX / d || rows < n || rows > SIZE_MAX / sizeof(double) / d) {
-        return MLR_ENOMEM;
+        return MLR_EINVAL;
     }
     for (size_t i = 0; i < n; i++) {
         if (!mlr_isfinite(y[i])) {
@@ -123,11 +125,14 @@ mlr_status mlr_linreg_fit(
         }
     }
 
+    // Solved into scratch so the model is untouched unless the fit succeeds
     double *mu_x = (double *)calloc(d, sizeof(double));
-    double *A = (double *)malloc(rows * d * sizeof(double));
-    double *b = (double *)malloc(rows * sizeof(double));
-    if (mu_x == NULL || A == NULL || b == NULL) {
+    double *w = (double *)calloc(d, sizeof(double));
+    double *A = (double *)calloc(rows * d, sizeof(double));
+    double *b = (double *)calloc(rows, sizeof(double));
+    if (mu_x == NULL || w == NULL || A == NULL || b == NULL) {
         free(mu_x);
+        free(w);
         free(A);
         free(b);
         return MLR_ENOMEM;
@@ -163,20 +168,27 @@ mlr_status mlr_linreg_fit(
         }
     }
 
-    mlr_status status = qr_solve(A, b, rows, d, model_out->w);
+    mlr_status status = qr_solve(A, b, rows, d, w);
     if (status == MLR_OK) {
         double xw = 0.0;
         for (size_t j = 0; j < d; j++) {
-            xw += mu_x[j] * model_out->w[j];
+            xw += mu_x[j] * w[j];
         }
-        model_out->b = mu_y - xw;
-        model_out->ridge = ridge;
-        if (!mlr_isfinite(model_out->b)) {
+        double intercept = mu_y - xw;
+        if (!mlr_isfinite(intercept)) {
             status = MLR_EDOMAIN;
+        } else {
+            for (size_t j = 0; j < d; j++) {
+                model->w[j] = w[j];
+            }
+            model->b = intercept;
+            model->ridge = ridge;
+            model->fitted = 1;
         }
     }
 
     free(mu_x);
+    free(w);
     free(A);
     free(b);
     return status;
@@ -192,7 +204,7 @@ mlr_status mlr_linreg_predict(
     if (X == NULL || model == NULL || out == NULL || n == 0 || d == 0) {
         return MLR_EINVAL;
     }
-    if (model->d != d || model->w == NULL) {
+    if (model->d != d || model->w == NULL || model->fitted != 1) {
         return MLR_EINVAL;
     }
 
