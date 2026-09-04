@@ -176,8 +176,8 @@ Range estimators (`mlr_parkinson_vol`, `mlr_garman_klass_vol`), the rolling stat
 | GARCH fit, 20 samples, same likelihood | `arch` | max parameter difference 5.0e-7 |
 | Parkinson and Garman-Klass, inconsistent bars included | numpy | 7.9e-16 |
 | Kelly, drawdown scaling, vol targeting with cap | numpy | 4.4e-15, exact, 4.6e-13 |
-| Ridge, d in 1..8, ridge 0..10, features 1e-6..1e6 | scikit-learn and closed form | 8.3e-15 of std(y) |
-| Ridge on designs with condition number 1e4 to 1e10 | SVD least squares | 1x cond times epsilon (2.8e-8 at 1e8) |
+| Ridge, d in 1..8, ridge 0..10, features 1e-6..1e6 | scikit-learn and closed form | 6.5e-15 of std(y) |
+| Ridge on designs with condition number 1e4 to 1e10 | SVD least squares | within 2x cond times epsilon (3.7e-8 at 1e8) |
 | Ridge slope with a feature at level 1e6 to 1e15 | exact rational OLS | under 1e-14 (scikit-learn: 1.7e-5 at 1e15) |
 | Walk-forward splits, 1620 parameter sets | independent generator | 0 mismatches |
 | Purge rule, labels spanning 2, 5 and 21 periods | leakage counted by construction | purge = h-1 clean, h-2 leaks |
