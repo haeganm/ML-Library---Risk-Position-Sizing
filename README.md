@@ -13,7 +13,7 @@
 - **Rolling mean and standard deviation** in O(n) that stay accurate at index levels: 1.7e-15 at a price level of 1e9, where a plain two-pass computation is already off by 4.9e-12.
 - **Ridge regression** for small feature sets, with the intercept left unpenalized.
 
-Builds as strict ISO C11 under GCC, Clang and MSVC with `-Wall -Wextra -Wpedantic -Werror` and `-ffp-contract=off`, so results agree across compilers to the last bit. CI runs the test suite on Linux (gcc and clang, 64- and 32-bit), macOS and Windows, under AddressSanitizer and UBSan, installs the library and consumes it through `find_package` and `pkg-config`, compiles the public headers as C++17, and runs a Python job that compares every function against pandas, numpy, scikit-learn and `arch`. This is research software, not investment advice.
+Builds as strict ISO C11 under GCC, Clang and MSVC with `-Wall -Wextra -Wpedantic -Werror` and `-ffp-contract=off` (`/W4 /WX /fp:precise` on MSVC), so results agree across compilers to the last bit. CI runs the test suite on Linux (gcc and clang, 64- and 32-bit), macOS and Windows, under AddressSanitizer and UBSan, installs the library and consumes it through `find_package` and `pkg-config`, compiles the public headers as C++17, and runs a Python job that compares every function against pandas, numpy, scikit-learn and `arch`. This is research software, not investment advice.
 
 ## Build
 
@@ -82,7 +82,7 @@ free(splits);
 
 **The forecast at t cannot see t.** `mlr_ewma_vol` emits `sqrt(variance)` before it absorbs `returns[t]`; `mlr_garch_filter` seeds from the model's stored backcast (the mean of squared returns over the fit sample) rather than from the series it is filtering, which is where the 2.x filter leaked. Both are tested for prefix stability (filtering the first half of a series gives the first half of the full filter, exactly) and for shock timing (a spike at bar k moves the output at k+1 and nothing before it). The reference suite goes further: for 40 random series it rewrites everything after a random `t` and asserts every output through `t` is bit-identical.
 
-**The fitter is checked against something it did not write.** `arch` 7.2.0 fits the same simulated sample with the same backcast, so both sides maximize the same function. On the first reference sample mlrisk reaches alpha 0.0810353, beta 0.8835013 and log-likelihood 9259.9490823; `arch` reaches 0.0810352, 0.8835015 and 9259.9490821. Across 20 fresh samples the largest parameter difference is 6e-7. `arch` needs the returns multiplied by 100 to converge on these samples; mlrisk fits them raw, because its Nelder-Mead stops on simplex diameter as well as function value and its feasibility bound on omega is positivity rather than an absolute floor.
+**The fitter is checked against something it did not write.** `arch` 7.2.0 fits the same simulated sample with the same backcast, so both sides maximize the same function. On the first reference sample mlrisk reaches alpha 0.0810353, beta 0.8835013 and log-likelihood 9259.9490823; `arch` reaches 0.0810352, 0.8835015 and 9259.9490821. Across 20 fresh samples the largest parameter difference is 5e-7. `arch` needs the returns multiplied by 100 to converge on these samples; mlrisk fits them raw, because its Nelder-Mead stops on simplex diameter as well as function value and its feasibility bound on omega is positivity rather than an absolute floor.
 
 **The fitter was checked against brute force.** A 108-start search on the identical likelihood (scipy, adaptive Nelder-Mead) was run over eleven series built to be awkward: near-IGARCH, no ARCH effect, t(3) innovations, a 50-sigma outlier, a fourfold variance regime switch, n = 100, and SPY, BTC and EURUSD. A single Nelder-Mead run from the best grid point lost to it on three of them (by 0.13, 0.02 and 1.7 log-likelihood units: a tiny-alpha series with a second basin at persistence 0.99, the outlier, and the regime switch). The fitter now starts from its three best grid points and restarts each from its own result until that stops helping; it matches the brute-force optimum on ten of the eleven to 1e-10 and beats it by 0.003 on the outlier series, where the maximum sits on the persistence bound and the restarts slide along it.
 
@@ -96,7 +96,7 @@ free(splits);
 
 ## Real data
 
-`tests/reference/real_data_check.py` runs the same machinery over daily OHLC files. Six series from Yahoo (2000 to September 2026) and one month of 1-minute BTC perpetual bars:
+`tests/reference/real_data_check.py` runs the same machinery over daily OHLC files. Six daily series from Yahoo, each from its first listing or 2000 through September 2026, and one month of 1-minute BTC perpetual bars:
 
 | Series | Bars | Inconsistent bars | alpha | beta | alpha + beta | alpha vs arch | Realized vol / target |
 |---|---|---|---|---|---|---|---|
@@ -147,7 +147,7 @@ Range estimators (`mlr_parkinson_vol`, `mlr_garman_klass_vol`) are per bar and c
 | Rolling std at price level 1e9 | exact rational arithmetic on the input doubles | 1.7e-15 (numpy two-pass: 4.9e-12) |
 | EWMA, predictive alignment | pandas `ewm(adjust=False)` shifted one period | 3.5e-18 |
 | GARCH filter and 20-step forecast | `arch` conditional variance and `forecast()` | 4.4e-16 and 8.9e-16 relative |
-| GARCH fit, 20 samples, same likelihood | `arch` | max parameter difference 5.9e-7 |
+| GARCH fit, 20 samples, same likelihood | `arch` | max parameter difference 5.0e-7 |
 | Parkinson and Garman-Klass, inconsistent bars included | numpy | 7.9e-16 |
 | Kelly, drawdown scaling, vol targeting with cap | numpy | 4.4e-15, exact, 4.6e-13 |
 | Ridge, d in 1..8, ridge 0..10, features 1e-6..1e6 | scikit-learn and closed form | 3.4e-15 of std(y) |
