@@ -1,11 +1,20 @@
 #include "mlrisk/linreg.h"
 #include <stdlib.h>
+#include <stdint.h>
 #include <math.h>
 #include <float.h>
+
+// Largest d for which d * (d + 1) doubles can be sized without overflow
+#define LINREG_MAX_D ((size_t)0xFFFFFFF)
 
 mlr_status mlr_lin_model_init(mlr_lin_model *model, size_t d) {
     if (model == NULL || d == 0) {
         return MLR_EINVAL;
+    }
+    if (d > LINREG_MAX_D) {
+        model->w = NULL;
+        model->d = 0;
+        return MLR_ENOMEM;
     }
 
     model->w = (double *)calloc(d, sizeof(double));
@@ -118,6 +127,9 @@ mlr_status mlr_linreg_fit(
     }
     if (model_out->d != d || model_out->w == NULL) {
         return MLR_EINVAL;
+    }
+    if (d > LINREG_MAX_D || n > SIZE_MAX / d) {
+        return MLR_ENOMEM;
     }
     if (!mlr_isfinite(ridge) || ridge < 0.0) {
         return MLR_EINVAL;

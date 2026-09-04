@@ -99,6 +99,12 @@ static int test_garch_filter_invalid_inputs(void) {
     model.omega = 0.2;
     model.alpha = 0.5;
     ASSERT(mlr_garch_filter(&model, returns, 3, sigma) == MLR_EINVAL, "alpha+beta>=1 -> EINVAL");
+
+    // Valid but extreme parameters that overflow the recursion fail loudly
+    mlr_garch extreme = {.omega = 1e308, .alpha = 0.3, .beta = 0.5, .converged = 1, .backcast = 1e308};
+    ASSERT(mlr_garch_filter(&extreme, returns, 3, sigma) == MLR_EDOMAIN, "overflowing recursion -> EDOMAIN");
+    extreme.sigma2_next = 1.0;   // uncond = 1e308 / 0.2 overflows
+    ASSERT(mlr_garch_forecast(&extreme, 3, sigma) == MLR_EDOMAIN, "overflowing forecast -> EDOMAIN");
     PASS("garch filter invalid inputs");
 }
 
@@ -268,6 +274,22 @@ static int test_garch_fit_scale_invariance(void) {
     PASS("garch fit scale invariance");
 }
 
+static int test_garch_fit_no_arch_effect(void) {
+    // iid returns: the maximum is on the boundary alpha = 0. The optimizer
+    // must converge there, not run to its iteration cap.
+    enum { N = 2000 };
+    static double returns[N];
+    unsigned long long state = 5;
+    for (size_t t = 0; t < N; t++) returns[t] = 0.01 * test_lcg_gauss(&state);
+
+    mlr_garch model;
+    ASSERT(mlr_garch_fit(returns, N, &model) == MLR_OK, "fit on iid returns OK");
+    ASSERT(model.converged, "fit on iid returns converges");
+    ASSERT(model.alpha < 0.05, "alpha near the boundary on iid returns (sampling noise allows a few 1e-3)");
+    ASSERT(mlr_isfinite(model.loglik), "loglik finite");
+    PASS("garch fit with no ARCH effect");
+}
+
 static int test_garch_fit_invalid_inputs(void) {
     double zeros[100] = {0.0};
     double small[50] = {0.01, -0.01};
@@ -346,6 +368,7 @@ int test_vol(void) {
     failures += test_garch_fit_recovers_simulation();
     failures += test_garch_fit_matches_arch();
     failures += test_garch_fit_scale_invariance();
+    failures += test_garch_fit_no_arch_effect();
     failures += test_garch_fit_invalid_inputs();
     failures += test_garch_filter_no_lookahead();
     failures += test_volatility_timing_alignment();

@@ -6,6 +6,7 @@ extern int test_vol(void);
 extern int test_sizing(void);
 extern int test_split(void);
 extern int test_linreg(void);
+extern int test_fuzz(void);
 
 typedef struct {
     const char *name;
@@ -18,6 +19,7 @@ static const test_module modules[] = {
     {"sizing", test_sizing},
     {"split", test_split},
     {"linreg", test_linreg},
+    {"fuzz", test_fuzz},
 };
 
 // Usage: mlrisk_tests [module ...]   (no arguments runs every module)

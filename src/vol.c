@@ -47,14 +47,18 @@ static double nm_eval(const garch_ctx *ctx, const double x[3]) {
 
 // Nelder-Mead in 3 dimensions, standard coefficients (reflection 1,
 // expansion 2, contraction 0.5, shrink 0.5). Converges when the simplex is
-// small relative to the best point AND the function values agree; the
-// function-value test alone is not enough because the objective carries an
-// additive constant that depends on the units of the returns.
+// small AND the function values agree; the function-value test alone is not
+// enough because the objective carries an additive constant that depends on
+// the units of the returns. Simplex size is measured against a fixed scale
+// per parameter (the backcast for omega, 1 for alpha and beta) rather than
+// the parameter's own magnitude, so a maximum on the boundary alpha = 0 (no
+// ARCH effect) converges instead of running to the iteration cap.
 // Returns 1 if converged, 0 if it hit the iteration cap.
 static int nelder_mead3(const garch_ctx *ctx, double x[3], double *f_out) {
     enum { DIM = 3, PTS = 4, MAX_ITER = 2000 };
     const double X_TOL = 1e-10;
     const double F_TOL = 1e-12;
+    const double scale[DIM] = {ctx->backcast, 1.0, 1.0};
     double simplex[PTS][DIM];
     double f[PTS];
 
@@ -89,7 +93,7 @@ static int nelder_mead3(const garch_ctx *ctx, double x[3], double *f_out) {
         double diameter = 0.0;
         for (int i = 1; i < PTS; i++) {
             for (int j = 0; j < DIM; j++) {
-                double rel = fabs(simplex[i][j] - simplex[0][j]) / (fabs(simplex[0][j]) + 1e-300);
+                double rel = fabs(simplex[i][j] - simplex[0][j]) / scale[j];
                 if (rel > diameter) diameter = rel;
             }
         }
@@ -174,30 +178,62 @@ mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out) 
     garch_ctx ctx = {returns, n, backcast};
 
     // Coarse feasible grid; omega from variance targeting so every point has
-    // unconditional variance equal to the backcast
+    // unconditional variance equal to the backcast.
     static const double alphas[] = {0.02, 0.05, 0.10, 0.15};
     static const double betas[] = {0.80, 0.88, 0.94};
-    double best[3] = {0.0, 0.0, 0.0};
-    double best_f = HUGE_VAL;
-
+    enum { GRID = 12, STARTS = 3, RESTARTS = 3 };
+    double grid_x[GRID][3];
+    double grid_f[GRID];
+    int g = 0;
     for (size_t a = 0; a < sizeof alphas / sizeof alphas[0]; a++) {
         for (size_t b = 0; b < sizeof betas / sizeof betas[0]; b++) {
-            double x[3] = {backcast * (1.0 - alphas[a] - betas[b]), alphas[a], betas[b]};
-            double fx = nm_eval(&ctx, x);
-            if (fx < best_f) {
-                best_f = fx;
-                best[0] = x[0];
-                best[1] = x[1];
-                best[2] = x[2];
-            }
+            grid_x[g][0] = backcast * (1.0 - alphas[a] - betas[b]);
+            grid_x[g][1] = alphas[a];
+            grid_x[g][2] = betas[b];
+            grid_f[g] = nm_eval(&ctx, grid_x[g]);
+            g++;
         }
     }
-    if (best_f == HUGE_VAL) {
+
+    // Nelder-Mead from the best STARTS grid points, keeping the best result.
+    // The likelihood can have more than one local maximum (a tiny ARCH
+    // effect with high persistence, or a variance regime change, both give
+    // a second basin), and a single start from the best grid point can land
+    // in the wrong one. Each start is re-run from its own result with a
+    // fresh simplex until that stops helping, which is what gets Nelder-Mead
+    // moving again after it stalls against the persistence bound.
+    double best[3] = {0.0, 0.0, 0.0};
+    double f_min = HUGE_VAL;
+    int converged = 0;
+    for (int k = 0; k < STARTS; k++) {
+        int bi = -1;
+        for (int i = 0; i < GRID; i++) {
+            if (grid_f[i] < HUGE_VAL && (bi < 0 || grid_f[i] < grid_f[bi])) bi = i;
+        }
+        if (bi < 0) break;
+        grid_f[bi] = HUGE_VAL;
+
+        double x[3] = {grid_x[bi][0], grid_x[bi][1], grid_x[bi][2]};
+        double f;
+        int c = nelder_mead3(&ctx, x, &f);
+        for (int r = 0; r < RESTARTS; r++) {
+            double x2[3] = {x[0], x[1], x[2]};
+            double f2;
+            int c2 = nelder_mead3(&ctx, x2, &f2);
+            if (!(f2 < f - 1e-9 * (fabs(f) + 1.0))) break;
+            x[0] = x2[0]; x[1] = x2[1]; x[2] = x2[2];
+            f = f2;
+            c = c2;
+        }
+        if (f < f_min) {
+            f_min = f;
+            best[0] = x[0]; best[1] = x[1]; best[2] = x[2];
+            converged = c;
+        }
+    }
+    if (f_min == HUGE_VAL) {
         return MLR_EDOMAIN;
     }
-
-    double f_min;
-    int converged = nelder_mead3(&ctx, best, &f_min);
 
     model_out->omega = best[0];
     model_out->alpha = best[1];
@@ -233,6 +269,11 @@ mlr_status mlr_garch_filter(const mlr_garch *model, const double *returns, size_
     double s2 = garch_seed(model->omega, model->alpha, model->beta, backcast);
 
     for (size_t t = 0; t < n; t++) {
+        // Extreme parameters or returns can overflow the recursion; fail
+        // rather than emit Inf
+        if (!mlr_isfinite(s2)) {
+            return MLR_EDOMAIN;
+        }
         sigma_out[t] = sqrt(s2);
         // A missing observation (or one whose square overflows) is replaced
         // by its conditional expectation E[r^2 | past] = s2
@@ -259,10 +300,16 @@ mlr_status mlr_garch_forecast(const mlr_garch *model, size_t horizon, double *si
 
     double persistence = model->alpha + model->beta;
     double uncond = model->omega / (1.0 - persistence);
+    if (!mlr_isfinite(uncond)) {
+        return MLR_EDOMAIN;
+    }
     double decay = 1.0;
 
     for (size_t h = 0; h < horizon; h++) {
         double s2 = uncond + decay * (model->sigma2_next - uncond);
+        if (!mlr_isfinite(s2)) {
+            return MLR_EDOMAIN;
+        }
         sigma_out[h] = sqrt(s2);
         decay *= persistence;
     }

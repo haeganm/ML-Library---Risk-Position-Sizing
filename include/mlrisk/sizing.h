@@ -30,7 +30,8 @@ extern "C" {
  *   position = (target_vol / sigma) * (equity / price)
  *
  * capped so that position * price <= max_leverage * equity. A non-finite or
- * non-positive sigma or price gives a position of 0 for that index.
+ * non-positive sigma or price gives a position of 0 for that index, as does
+ * a price extreme enough that the position would be infinite or denormal.
  *
  * To cap risk per position instead, pass the risk cap (as a fraction of
  * equity) as target_vol; the formula is identical.

@@ -34,7 +34,8 @@ typedef struct {
  *
  * @param model Model to initialize
  * @param d Feature dimension (>= 1)
- * @return MLR_OK on success, MLR_EINVAL on invalid input, MLR_ENOMEM on allocation failure
+ * @return MLR_OK on success, MLR_EINVAL on invalid input, MLR_ENOMEM on
+ *         allocation failure or a dimension too large to allocate
  */
 mlr_status mlr_lin_model_init(mlr_lin_model *model, size_t d);
 

@@ -52,10 +52,11 @@ if(MLRISK_BUILD_TESTS)
         tests/test_vol.c
         tests/test_split.c
         tests/test_linreg.c
+        tests/test_fuzz.c
     )
     target_compile_options(mlrisk_tests PRIVATE ${MLRISK_COMPILE_OPTIONS})
     target_link_libraries(mlrisk_tests PRIVATE mlrisk::mlrisk)
-    foreach(module rolling vol sizing split linreg)
+    foreach(module rolling vol sizing split linreg fuzz)
         add_test(NAME ${module} COMMAND mlrisk_tests ${module})
     endforeach()
 endif()
@@ -64,6 +65,10 @@ if(MLRISK_BUILD_EXAMPLES)
     add_executable(vol_target_demo examples/vol_target_demo.c)
     target_compile_options(vol_target_demo PRIVATE ${MLRISK_COMPILE_OPTIONS})
     target_link_libraries(vol_target_demo PRIVATE mlrisk::mlrisk)
+
+    add_executable(mlrisk_bench bench/bench.c)
+    target_compile_options(mlrisk_bench PRIVATE ${MLRISK_COMPILE_OPTIONS})
+    target_link_libraries(mlrisk_bench PRIVATE mlrisk::mlrisk)
 endif()
 
 if(MLRISK_INSTALL)

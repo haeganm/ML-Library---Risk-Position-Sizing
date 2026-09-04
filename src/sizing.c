@@ -1,4 +1,5 @@
 #include "mlrisk/sizing.h"
+#include <float.h>
 
 mlr_status mlr_vol_target_position(
     const double *sigma,
@@ -33,7 +34,10 @@ mlr_status mlr_vol_target_position(
         if (position * price[i] > max_notional) {
             position = max_notional / price[i];
         }
-        position_out[i] = position;
+        // A denormal price overflows equity / price even after the cap, and a
+        // denormal position has too few bits left to respect the cap; both
+        // are zero
+        position_out[i] = (mlr_isfinite(position) && position >= DBL_MIN) ? position : 0.0;
     }
 
     return MLR_OK;

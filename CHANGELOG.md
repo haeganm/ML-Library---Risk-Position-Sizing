@@ -8,6 +8,28 @@ of contract gaps.
 
 ### Fixed
 
+- The GARCH optimizer's convergence test measured the simplex relative to
+  each parameter's own magnitude, so a maximum on the boundary `alpha = 0`
+  (returns with no ARCH effect) could never satisfy it: the fit ran to the
+  2000-iteration cap, took 16x longer than it should, and reported
+  `converged = 0` on a finished fit. The simplex is now measured against a
+  fixed scale per parameter (the backcast for omega, 1 for alpha and beta).
+- `mlr_garch_fit` ran Nelder-Mead once, from the best grid point, and could
+  stop in the wrong basin: against a 108-start brute-force search on the
+  identical likelihood it lost on three of eleven adversarial series (tiny
+  alpha with a second maximum at persistence 0.99, a 50-sigma outlier, a
+  fourfold variance regime switch), by up to 1.7 log-likelihood units. It now
+  runs from its three best grid points, restarts each from its own result
+  until that stops improving, and keeps the best; it matches the brute-force
+  optimum on ten of the eleven and beats it on the outlier series. Fits cost 5 to 7x what they did (8 ms at n = 1000).
+- `mlr_vol_target_position` let a denormal price overflow `equity / price`
+  past the leverage cap (an infinite position with `MLR_OK`), and let a
+  denormal position slip the cap by rounding; both are now zero.
+- `mlr_garch_filter` and `mlr_garch_forecast` emitted `Inf` when extreme but
+  valid parameters overflowed the recursion; they now return `MLR_EDOMAIN`.
+- `mlr_lin_model_init` and `mlr_linreg_fit` refuse dimensions whose
+  allocation size would overflow (`MLR_ENOMEM`) instead of relying on
+  `calloc` to notice.
 - `mlr_garch_filter` treated a finite return whose square overflows as data,
   pinning every later sigma at `Inf` with `MLR_OK`; it is now treated as
   missing, the same rule EWMA already used.
@@ -44,6 +66,14 @@ of contract gaps.
   only the GARCH filter had one), tests for `window == n`, all-NaN rolling
   input, NULL outputs on the range estimators, and the GARCH filter
   overflow rule.
+- `tests/test_fuzz.c`: 4000 randomized calls across the whole API (NaN, Inf,
+  denormals, `SIZE_MAX` arguments) asserting the documented contracts; runs
+  under the sanitizers in CI and found the two sizing/filter holes above.
+- `tests/reference/real_data_check.py` for daily OHLC files, and
+  `bench/bench.c` (`mlrisk_bench`) with per-element timings and scaling ratios.
+- A 32-bit (`-m32`) CI leg, so the `size_t` guards are exercised where
+  `size_t` is 32 bits; the workflow now runs on every branch push and can be
+  dispatched by hand.
 - The sanitizer CI job also runs the example; the Windows example step
   declares its shell; the workflow passes `actionlint`.
 - The C two-pass reference in the rolling tests is computed on shifted

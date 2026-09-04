@@ -84,11 +84,46 @@ free(splits);
 
 **The fitter is checked against something it did not write.** `arch` 7.2.0 fits the same simulated sample with the same backcast, so both sides maximize the same function. On the first reference sample mlrisk reaches alpha 0.0810353, beta 0.8835013 and log-likelihood 9259.9490823; `arch` reaches 0.0810352, 0.8835015 and 9259.9490821. Across 20 fresh samples the largest parameter difference is 6e-7. `arch` needs the returns multiplied by 100 to converge on these samples; mlrisk fits them raw, because its Nelder-Mead stops on simplex diameter as well as function value and its feasibility bound on omega is positivity rather than an absolute floor.
 
+**The fitter was checked against brute force.** A 108-start search on the identical likelihood (scipy, adaptive Nelder-Mead) was run over eleven series built to be awkward: near-IGARCH, no ARCH effect, t(3) innovations, a 50-sigma outlier, a fourfold variance regime switch, n = 100, and SPY, BTC and EURUSD. A single Nelder-Mead run from the best grid point lost to it on three of them (by 0.13, 0.02 and 1.7 log-likelihood units: a tiny-alpha series with a second basin at persistence 0.99, the outlier, and the regime switch). The fitter now starts from its three best grid points and restarts each from its own result until that stops helping; it matches the brute-force optimum on ten of the eleven to 1e-10 and beats it by 0.003 on the outlier series, where the maximum sits on the persistence bound and the restarts slide along it.
+
 **Missing data does not poison state.** A NaN return leaves the forecast already made untouched and carries the recursion forward (EWMA keeps its variance, GARCH steps its own one-step forecast). A NaN inside a rolling window makes that window NaN and nothing else. A finite return whose square overflows is treated as missing rather than turning every later sigma into Inf.
 
 **Bad arguments refuse the call, bad elements mark the element.** Non-finite scalars (`target_vol`, `equity`, `max_leverage`, `lambda`, `ridge`, `max_dd`) and non-finite inputs to the fitters (`mlr_garch_fit`, `mlr_kelly_fraction`, `mlr_drawdown_scale`, `mlr_linreg_fit`) return `MLR_EINVAL`. Per-element inputs to the streaming functions (a bad price, a bar with `high < low`) produce a NaN or a zero at that index with `MLR_OK`.
 
 **The tests were mutation-tested.** Eleven deliberate breakages (drop the ridge term, drop the offset shift, drop the predict dimension check, drop each overflow guard, revert the optimizer criterion, revert the EWMA alignment, and so on) were compiled against the suite; ten failed at least one assertion and the eleventh is unreachable through the public API because inputs are validated before the solver sees them.
+
+**Every function is fed garbage on every run.** `tests/test_fuzz.c` calls the whole API 4000 times with random sizes and contents (NaN, Inf, denormals, 1e308, negative zero, `SIZE_MAX` arguments) under AddressSanitizer and UBSan in CI, and checks the promises rather than the numbers: no crash, only documented status codes, positions finite and under the cap, filter output never Inf. Its first run found two holes: a denormal price made `equity / price` overflow past the leverage cap, and a hand-built model with omega near 1e308 made the filter emit Inf with `MLR_OK`. Both now fail closed (zero position; `MLR_EDOMAIN`).
+
+## Real data
+
+`tests/reference/real_data_check.py` runs the same machinery over daily OHLC files. Six series from Yahoo (2000 to September 2026) and one month of 1-minute BTC perpetual bars:
+
+| Series | Bars | Inconsistent bars | alpha | beta | alpha + beta | alpha vs arch | Realized vol / target |
+|---|---|---|---|---|---|---|---|
+| SPY | 6707 | 0 | 0.151 | 0.808 | 0.959 | 1.1e-8 | 1.03 |
+| AAPL | 6707 | 0 | 0.093 | 0.871 | 0.964 | 3.3e-9 | 1.04 |
+| TLT | 6063 | 0 | 0.085 | 0.893 | 0.978 | 5.5e-9 | 1.05 |
+| GLD | 5481 | 0 | 0.109 | 0.865 | 0.974 | 6.8e-8 | 1.03 |
+| EURUSD | 5906 | 128 | 0.048 | 0.938 | 0.986 | 2.7e-7 | 1.01 |
+| BTC-USD | 4370 | 0 | 0.091 | 0.873 | 0.964 | 4.0e-8 | 0.92 |
+
+Fits are on the last 2000 demeaned log returns; the log-likelihood is never below `arch`'s and the fit on returns multiplied by 100 agrees with the raw fit to 3e-8 in persistence. The 128 inconsistent EURUSD bars (open or close outside the day's range, a quirk of that feed) produce exactly 128 Garman-Klass NaNs and nothing else. The filters are prefix-stable on every series, bit for bit.
+
+The 1-minute BTC series (45,030 returns, rms 1e-3) is the case that broke 2.x: on the raw returns, on returns scaled by 1e-4 (rms 1e-7, omega 1.5e-16) and by 1e4, mlrisk returns alpha 0.100410 and beta 0.893285 every time. `arch` on the same sample scaled by 100 stops at its starting values (0.10, 0.88), 50 log-likelihood units short, and reports success; scaled by 1000 it reaches mlrisk's numbers to six decimals.
+
+## Performance
+
+`bench/bench.c` (built with the examples, run `./build/mlrisk_bench`). Apple M-series, clang, `-O2`, best of 3:
+
+| Function | n | Time | ns per element |
+|---|---|---|---|
+| `mlr_rolling_mean`, window 50 | 10,000,000 | 42 ms | 4.2 |
+| `mlr_rolling_std`, window 50 | 10,000,000 | 153 ms | 15.3 |
+| `mlr_ewma_vol` | 10,000,000 | 39 ms | 3.9 |
+| `mlr_garch_filter` | 10,000,000 | 49 ms | 4.9 |
+| `mlr_garch_fit` | 100,000 | 506 ms | three starts, about 1000 likelihood evaluations |
+
+Each streaming row is within 10% of ten times the row for a tenth of n. The fit is linear in n because a Nelder-Mead start takes about 150 iterations whatever the sample size; a run on iid returns (no ARCH effect, alpha at the boundary) used to hit the 2000-iteration cap because the convergence test was relative to alpha itself, which is one of the 3.1.0 fixes. The three starts and their restarts cost 5 to 7x a single run, which is 8 ms at n = 1000.
 
 ## Conventions
 
@@ -120,6 +155,7 @@ Range estimators (`mlr_parkinson_vol`, `mlr_garman_klass_vol`) are per bar and c
 | No lookahead, 40 trials, 4 functions | bitwise prefix comparison | 0 violations |
 | Vol-targeting loop, 50 seeds, 4 folds | realized vol / target | mean 1.005, sd 0.067 |
 | Example binary PnL, seed 42 | recomputed from raw arrays | within 0.004 currency units |
+| Randomized API sweep, 4000 calls | ASan and UBSan, contract assertions | no findings after the two fixes above |
 
 GARCH(1,1) parameter recovery, 200 simulated series per row, truth alpha 0.10, beta 0.85:
 

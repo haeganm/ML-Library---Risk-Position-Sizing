@@ -2,8 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -41,6 +41,21 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: .\build\Release\vol_target_demo.exe
+
+  build-test-32bit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install 32-bit toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - name: Configure (-m32, size_t is 32 bits)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-m32 -DCMAKE_EXE_LINKER_FLAGS=-m32
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Run example
+        run: ./build/vol_target_demo
 
   sanitize:
     runs-on: ubuntu-latest

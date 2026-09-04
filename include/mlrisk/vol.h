@@ -50,8 +50,11 @@ typedef struct {
 /**
  * @brief Fit GARCH(1,1) by Gaussian maximum likelihood
  *
- * A coarse feasible grid seeds a Nelder-Mead refinement. Non-convergence is
- * not an error: the best point found is returned with converged == 0.
+ * A coarse feasible grid seeds Nelder-Mead from its three best points, each
+ * restarted from its own result until that stops improving, and the best
+ * result is kept; the likelihood can have more than one local maximum.
+ * Non-convergence is not an error: the best point found is returned with
+ * converged == 0.
  * alpha and beta are invariant to the scale of the returns; omega scales
  * with their variance.
  *
@@ -89,7 +92,9 @@ mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out);
  * @param sigma_out Output per-period sigma (length n, pre-allocated)
  * @return MLR_OK on success, MLR_EINVAL on invalid input or parameters
  *         (omega must be finite and > 0, alpha and beta >= 0 with
- *         alpha + beta < 0.9999, backcast finite and >= 0)
+ *         alpha + beta < 0.9999, backcast finite and >= 0), MLR_EDOMAIN if
+ *         the recursion overflows (extreme parameters or returns); no
+ *         output is Inf
  */
 mlr_status mlr_garch_filter(const mlr_garch *model, const double *returns, size_t n,
                             double *sigma_out);
@@ -104,7 +109,8 @@ mlr_status mlr_garch_filter(const mlr_garch *model, const double *returns, size_
  * @param model Fitted model
  * @param horizon Number of steps to forecast (>= 1)
  * @param sigma_out Output per-period sigma (length horizon, pre-allocated)
- * @return MLR_OK on success, MLR_EINVAL on invalid input or parameters
+ * @return MLR_OK on success, MLR_EINVAL on invalid input or parameters,
+ *         MLR_EDOMAIN if the variance path overflows
  */
 mlr_status mlr_garch_forecast(const mlr_garch *model, size_t horizon, double *sigma_out);
 

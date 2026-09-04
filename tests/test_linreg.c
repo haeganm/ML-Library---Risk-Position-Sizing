@@ -1,5 +1,6 @@
 #include "mlrisk/linreg.h"
 #include "test_util.h"
+#include <stdint.h>
 
 #define TOL 1e-9
 
@@ -161,6 +162,10 @@ static int test_lin_model_init_free(void) {
 
     ASSERT(mlr_lin_model_init(NULL, 5) == MLR_EINVAL, "NULL model -> EINVAL");
     ASSERT(mlr_lin_model_init(&model, 0) == MLR_EINVAL, "d=0 -> EINVAL");
+
+    // An allocation that cannot succeed (d * sizeof(double) overflows size_t)
+    ASSERT(mlr_lin_model_init(&model, SIZE_MAX / 2) == MLR_ENOMEM, "impossible allocation -> ENOMEM");
+    ASSERT(model.w == NULL && model.d == 0, "model left empty after ENOMEM");
     PASS("lin_model init/free");
 }
 
