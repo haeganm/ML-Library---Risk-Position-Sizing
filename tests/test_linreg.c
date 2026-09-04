@@ -22,12 +22,15 @@ static int test_linreg_exact_1d(void) {
     ASSERT_NEAR(pred[0], 11.0, TOL, "prediction at 5");
     ASSERT_NEAR(pred[1], 13.0, TOL, "prediction at 6");
 
-    // Ridge shrinks the slope toward zero: w = Sxy / (Sxx + ridge), b = mean(y) - mean(x) w
-    ASSERT(mlr_linreg_fit(X, y, 5, 1, 0.01, &model) == MLR_OK, "ridge fit OK");
-    double w = 20.0 / (10.0 + 0.01);
+    // Ridge shrinks the slope toward zero: w = Sxy / (Sxx + ridge), b = mean(y) - mean(x) w.
+    // Compared against a double variable, not the literal: under x87
+    // excess precision (32-bit x86) a literal is evaluated in long double.
+    const double ridge = 0.01;
+    ASSERT(mlr_linreg_fit(X, y, 5, 1, ridge, &model) == MLR_OK, "ridge fit OK");
+    double w = 20.0 / (10.0 + ridge);
     ASSERT_NEAR(model.w[0], w, TOL, "ridge slope");
     ASSERT_NEAR(model.b, 5.0 - 2.0 * w, TOL, "ridge intercept");
-    ASSERT(model.ridge == 0.01, "model records the ridge used");
+    ASSERT(model.ridge == ridge, "model records the ridge used");
 
     mlr_lin_model_free(&model);
     PASS("linreg exact 1D");
