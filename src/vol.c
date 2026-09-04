@@ -1,4 +1,5 @@
 #include "mlrisk/vol.h"
+#include <float.h>
 #include <math.h>
 
 #define LN2 0.69314718055994530942
@@ -177,7 +178,9 @@ mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out) 
         backcast += returns[t] * returns[t];
     }
     backcast /= (double)n;
-    if (!mlr_isfinite(backcast) || backcast <= 0.0) {
+    // A denormal variance would run the whole likelihood in the denormal
+    // range, where the estimates degrade; the header promises EDOMAIN
+    if (!mlr_isfinite(backcast) || backcast < DBL_MIN) {
         return MLR_EDOMAIN;
     }
 

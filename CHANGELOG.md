@@ -36,6 +36,11 @@
   `fmax` that guards an epsilon-negative variance turned the resulting NaN
   into a zero standard deviation. Such windows are now NaN, the state is
   rebuilt on the next step, and no output is ever Inf.
+- `mlr_garch_fit` documented `MLR_EDOMAIN` for a denormally small variance
+  but only rejected zero; at a backcast of 4e-321 it returned `MLR_OK` with
+  alpha drifted by 0.003 and `converged = 0`. Variances below `DBL_MIN` are
+  now refused as documented; anything above fits to the same parameters as
+  the unscaled series.
 - `mlr_kelly_fraction` returned `f = 0` with `MLR_OK` when the squared
   deviations overflowed (variance `Inf`), a silently rounded estimate where
   the same function already refuses the NaN form of the overflow. It now

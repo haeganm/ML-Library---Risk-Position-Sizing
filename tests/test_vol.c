@@ -301,6 +301,19 @@ static int test_garch_fit_invalid_inputs(void) {
     ASSERT(mlr_garch_fit(NULL, 100, &model) == MLR_EINVAL, "NULL returns -> EINVAL");
     ASSERT(mlr_garch_fit(zeros, 100, NULL) == MLR_EINVAL, "NULL model -> EINVAL");
 
+    // Denormal variance is refused; a variance just above DBL_MIN still fits
+    // to the same alpha and beta as the unscaled series
+    static double tiny[2000], base[2000];
+    simulate_garch(12345, 2e-6, 0.10, 0.85, 2000, base);
+    mlr_garch ref;
+    ASSERT(mlr_garch_fit(base, 2000, &ref) == MLR_OK, "reference fit OK");
+    for (size_t t = 0; t < 2000; t++) tiny[t] = base[t] * 1e-158;
+    ASSERT(mlr_garch_fit(tiny, 2000, &model) == MLR_EDOMAIN, "denormal variance -> EDOMAIN");
+    for (size_t t = 0; t < 2000; t++) tiny[t] = base[t] * 1e-150;
+    ASSERT(mlr_garch_fit(tiny, 2000, &model) == MLR_OK, "variance above DBL_MIN fits");
+    ASSERT_NEAR(model.alpha, ref.alpha, 1e-6, "alpha unchanged at scale 1e-150");
+    ASSERT_NEAR(model.beta, ref.beta, 1e-6, "beta unchanged at scale 1e-150");
+
     zeros[5] = MLR_NAN;
     ASSERT(mlr_garch_fit(zeros, 100, &model) == MLR_EINVAL, "non-finite return -> EINVAL");
     zeros[5] = 1e200;
