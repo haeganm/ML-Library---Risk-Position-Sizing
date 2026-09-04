@@ -1,0 +1,3 @@
+# Verification tooling, not part of the library: keep GitHub's language
+# statistics honest about what mlrisk is
+tests/reference/** linguist-detectable=false

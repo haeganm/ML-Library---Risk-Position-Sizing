@@ -13,7 +13,7 @@
 - **Rolling mean and standard deviation** in O(n) that stay accurate at index levels: 1.7e-15 at a price level of 1e9, where a plain two-pass computation is already off by 4.9e-12.
 - **Ridge regression** for small feature sets, with the intercept left unpenalized.
 
-Builds as strict ISO C11 under GCC, Clang and MSVC with `-Wall -Wextra -Wpedantic -Werror` and `-ffp-contract=off`, so results agree across compilers to the last bit. CI runs the test suite on Linux (gcc and clang), macOS and Windows, under AddressSanitizer and UBSan, installs the library and consumes it through `find_package` and `pkg-config`, compiles the public headers as C++17, and runs a Python job that compares every function against pandas, numpy, scikit-learn and `arch`. This is research software, not investment advice.
+Builds as strict ISO C11 under GCC, Clang and MSVC with `-Wall -Wextra -Wpedantic -Werror` and `-ffp-contract=off`, so results agree across compilers to the last bit. CI runs the test suite on Linux (gcc and clang, 64- and 32-bit), macOS and Windows, under AddressSanitizer and UBSan, installs the library and consumes it through `find_package` and `pkg-config`, compiles the public headers as C++17, and runs a Python job that compares every function against pandas, numpy, scikit-learn and `arch`. This is research software, not investment advice.
 
 ## Build
 
@@ -22,7 +22,7 @@ Requires CMake 3.21 and any C11 compiler.
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release   # strict C11, warnings are errors
 cmake --build build --config Release
-ctest --test-dir build -C Release --output-on-failure   # five modules, one ctest entry each
+ctest --test-dir build -C Release --output-on-failure   # six modules, one ctest entry each
 ./build/vol_target_demo                                  # walk-forward GARCH sizing loop, seed 42
 ./build/vol_target_demo 7                                # any other seed
 ```
@@ -92,7 +92,7 @@ free(splits);
 
 **The tests were mutation-tested.** Eleven deliberate breakages (drop the ridge term, drop the offset shift, drop the predict dimension check, drop each overflow guard, revert the optimizer criterion, revert the EWMA alignment, and so on) were compiled against the suite; ten failed at least one assertion and the eleventh is unreachable through the public API because inputs are validated before the solver sees them.
 
-**Every function is fed garbage on every run.** `tests/test_fuzz.c` calls the whole API 4000 times with random sizes and contents (NaN, Inf, denormals, 1e308, negative zero, `SIZE_MAX` arguments) under AddressSanitizer and UBSan in CI, and checks the promises rather than the numbers: no crash, only documented status codes, positions finite and under the cap, filter output never Inf. Its first run found two holes: a denormal price made `equity / price` overflow past the leverage cap, and a hand-built model with omega near 1e308 made the filter emit Inf with `MLR_OK`. Both now fail closed (zero position; `MLR_EDOMAIN`).
+**Every function is fed garbage on every run.** `tests/test_fuzz.c` runs 4000 rounds of 17 calls covering the whole API with random sizes and contents (NaN, Inf, denormals, 1e308, negative zero, `SIZE_MAX` arguments) under AddressSanitizer and UBSan in CI, and checks the promises rather than the numbers: no crash, only documented status codes, positions finite and under the cap, filter output never Inf. Its first run found two holes: a denormal price made `equity / price` overflow past the leverage cap, and a hand-built model with omega near 1e308 made the filter emit Inf with `MLR_OK`. Both now fail closed (zero position; `MLR_EDOMAIN`).
 
 ## Real data
 
@@ -121,7 +121,7 @@ The 1-minute BTC series (45,030 returns, rms 1e-3) is the case that broke 2.x: o
 | `mlr_rolling_std`, window 50 | 10,000,000 | 153 ms | 15.3 |
 | `mlr_ewma_vol` | 10,000,000 | 39 ms | 3.9 |
 | `mlr_garch_filter` | 10,000,000 | 49 ms | 4.9 |
-| `mlr_garch_fit` | 100,000 | 506 ms | three starts, about 1000 likelihood evaluations |
+| `mlr_garch_fit` | 100,000 | 506 ms | three starts, about 1400 likelihood evaluations |
 
 Each streaming row is within 10% of ten times the row for a tenth of n. The fit is linear in n because a Nelder-Mead start takes about 150 iterations whatever the sample size; a run on iid returns (no ARCH effect, alpha at the boundary) used to hit the 2000-iteration cap because the convergence test was relative to alpha itself, which is one of the 3.1.0 fixes. The three starts and their restarts cost 5 to 7x a single run, which is 8 ms at n = 1000.
 
@@ -139,7 +139,7 @@ Range estimators (`mlr_parkinson_vol`, `mlr_garman_klass_vol`) are per bar and c
 
 ## Validation
 
-`tests/reference/reference_check.py` compiles the C sources into a shared library, calls them through ctypes, and compares against independent implementations. CI runs it on every push. Measured on the current tree:
+`tests/reference/reference_check.py` compiles the C sources into a shared library, calls them through ctypes, and compares against independent implementations. CI runs it on every push. The Python under `tests/reference/` is verification tooling and nothing else: the library has no Python dependency and the C tests do not need it. Measured on the current tree:
 
 | Check | Reference | Result |
 |---|---|---|
@@ -155,7 +155,7 @@ Range estimators (`mlr_parkinson_vol`, `mlr_garman_klass_vol`) are per bar and c
 | No lookahead, 40 trials, 4 functions | bitwise prefix comparison | 0 violations |
 | Vol-targeting loop, 50 seeds, 4 folds | realized vol / target | mean 1.005, sd 0.067 |
 | Example binary PnL, seed 42 | recomputed from raw arrays | within 0.004 currency units |
-| Randomized API sweep, 4000 calls | ASan and UBSan, contract assertions | no findings after the two fixes above |
+| Randomized API sweep, 4000 rounds of 17 calls | ASan and UBSan, contract assertions | no findings after the two fixes above |
 
 GARCH(1,1) parameter recovery, 200 simulated series per row, truth alpha 0.10, beta 0.85:
 
