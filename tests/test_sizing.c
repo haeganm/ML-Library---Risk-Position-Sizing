@@ -107,6 +107,9 @@ static int test_kelly_fraction(void) {
     // Finite inputs whose sums overflow must not produce a NAN estimate
     double huge[] = {1e308, 1e308, -1e308};
     ASSERT(mlr_kelly_fraction(huge, 3, 1.0, &f) == MLR_EDOMAIN, "overflowing sums -> EDOMAIN");
+    // Finite mean, overflowing variance: refused rather than rounded to 0
+    double wide[] = {3e154, -1e154, 3e154, -1e154};
+    ASSERT(mlr_kelly_fraction(wide, 4, 1.0, &f) == MLR_EDOMAIN, "overflowing variance -> EDOMAIN");
     PASS("kelly fraction");
 }
 

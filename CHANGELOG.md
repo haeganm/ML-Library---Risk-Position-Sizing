@@ -9,6 +9,10 @@
   over period `t` de-levers on the bar of a loss using that bar's own close.
   The header, the sizing contract and the README now say to use
   `scale[t-1]`; a test pins the alignment. No code change.
+- `mlr_kelly_fraction` returned `f = 0` with `MLR_OK` when the squared
+  deviations overflowed (variance `Inf`), a silently rounded estimate where
+  the same function already refuses the NaN form of the overflow. It now
+  returns `MLR_EDOMAIN`.
 
 
 ## 3.3.0 (2026-09-04)

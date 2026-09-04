@@ -71,7 +71,9 @@ mlr_status mlr_kelly_fraction(const double *returns, size_t n, double fraction, 
     }
     var /= (double)(n - 1);
 
-    if (!(var > 0.0)) {
+    // Zero variance has no Kelly fraction; an overflowed variance would give
+    // a silently rounded estimate, so it is refused too
+    if (!(var > 0.0) || !mlr_isfinite(var)) {
         return MLR_EDOMAIN;
     }
 

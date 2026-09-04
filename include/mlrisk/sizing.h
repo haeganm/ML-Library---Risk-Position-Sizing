@@ -81,7 +81,7 @@ mlr_status mlr_vol_target_position(
  * @param f_out Receives the Kelly fraction of equity
  * @return MLR_OK on success, MLR_EINVAL on invalid input (including a
  *         non-finite return), MLR_EDOMAIN if the returns have zero variance
- *         or the estimate is not finite
+ *         or their variance or the estimate cannot be represented
  */
 mlr_status mlr_kelly_fraction(const double *returns, size_t n, double fraction, double *f_out);
 
