@@ -32,6 +32,9 @@
   publishes to PyPI through trusted publishing, with no API token in the
   repository. A tag that disagrees with the version in `CMakeLists.txt` is
   refused before anything is built. See `RELEASING.md`.
+  Validated by running the workflow before any tag: it produces one
+  `py3-none` wheel per platform, each carrying its own shared library, and
+  the Linux wheels need only glibc 2.17 so they install anywhere numpy does.
 
 ### Changed
 
