@@ -130,8 +130,8 @@ The 1-minute BTC series (45,030 returns, rms 1e-3) is the case that broke 2.x: o
 
 | Function | n | Time | ns per element |
 |---|---|---|---|
-| `mlr_rolling_mean`, window 50 | 10,000,000 | 49 ms | 4.9 |
-| `mlr_rolling_std`, window 50 | 10,000,000 | 205 ms | 20.5 |
+| `mlr_rolling_mean`, window 50 | 10,000,000 | 56 ms | 5.6 |
+| `mlr_rolling_std`, window 50 | 10,000,000 | 204 ms | 20.4 |
 | `mlr_ewma_vol` | 10,000,000 | 39 ms | 3.9 |
 | `mlr_garch_filter` | 10,000,000 | 49 ms | 4.9 |
 | `mlr_garch_fit` | 100,000 | 506 ms | three starts, about 1400 likelihood evaluations |

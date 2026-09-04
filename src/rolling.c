@@ -47,10 +47,11 @@ mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *ML
     double offset = 0.0;
     double sum = 0.0;
     size_t bad = 0;
+    int overflowed = 0;
 
     for (size_t i = window - 1; i < n; i++) {
         size_t start = i - window + 1;
-        int rebuild = (start % window == 0);
+        int rebuild = (start % window == 0) || overflowed;
         if (!rebuild) {
             // Slide: x[i] enters, x[i - window] leaves; the sum only ever
             // holds finite values, so it is clean the moment `bad` returns to 0
@@ -83,7 +84,11 @@ mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *ML
                 }
             }
         }
-        out[i] = (bad > 0) ? MLR_NAN : offset + sum / (double)window;
+        // Finite inputs whose differences exceed DBL_MAX overflow the shifted
+        // sum; that window is NaN and the state is rebuilt on the next step
+        overflowed = !mlr_isfinite(sum);
+        double mean = offset + sum / (double)window;
+        out[i] = (bad > 0 || !mlr_isfinite(mean)) ? MLR_NAN : mean;
     }
 
     return MLR_OK;
@@ -170,8 +175,15 @@ mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *MLR
             valid = 1;
         }
 
+        // Finite inputs whose differences exceed DBL_MAX overflow the shifted
+        // accumulators; that window is NaN and the state is rebuilt next step
+        if (!mlr_isfinite(mean) || !mlr_isfinite(m2)) {
+            out[i] = MLR_NAN;
+            valid = 0;
+            continue;
+        }
         // Removal can push m2 epsilon-negative
-        out[i] = sqrt(fmax(m2, 0.0) / w);
+        out[i] = sqrt((m2 > 0.0 ? m2 : 0.0) / w);
     }
 
     return MLR_OK;

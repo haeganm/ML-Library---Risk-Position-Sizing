@@ -15,8 +15,10 @@
  * bar before using it to size a position held over period t (mlr_ewma_vol
  * below is already aligned that way). Indices without a full window are
  * MLR_NAN, and window > n gives all MLR_NAN with MLR_OK. A non-finite input
- * (missing data) makes every window containing it MLR_NAN; output recovers
- * once the value leaves the window. Population variance throughout (divides
+ * (missing data) makes every window containing it MLR_NAN, as does a window
+ * whose values differ by more than DBL_MAX or whose variance exceeds it
+ * (the arithmetic overflows); output recovers once the value leaves the
+ * window. No output is ever Inf. Population variance throughout (divides
  * by window; pandas rolling().std() defaults to the sample convention).
  */
 

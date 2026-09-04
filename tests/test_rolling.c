@@ -190,6 +190,28 @@ static int test_rolling_outliers_and_trend(void) {
     PASS("outliers leaving the window and long trends");
 }
 
+static int test_rolling_overflow_windows(void) {
+    // Finite inputs whose differences overflow: the window is NaN, never
+    // Inf, never a silent zero std, and the state recovers afterwards
+    double x[] = {1e308, -1e308, 1e308, -1e308, 1.0, 2.0, 3.0, 4.0};
+    double mean_out[8], std_out[8];
+    ASSERT(mlr_rolling_mean(x, 8, 2, mean_out) == MLR_OK, "mean OK");
+    ASSERT(mlr_rolling_std(x, 8, 2, std_out) == MLR_OK, "std OK");
+    for (size_t i = 1; i < 4; i++) {
+        ASSERT(mlr_isnan(mean_out[i]), "mean of an overflowing window is NaN");
+        ASSERT(mlr_isnan(std_out[i]), "std of an overflowing window is NaN, not 0");
+    }
+    ASSERT(mean_out[4] == -5e307, "representable mean of {-1e308, 1} is computed");
+    ASSERT(mlr_isnan(std_out[4]), "std whose variance overflows is NaN");
+    ASSERT(mean_out[5] == 1.5 && mean_out[7] == 3.5, "mean recovers after the overflow leaves");
+    ASSERT(std_out[5] == 0.5 && std_out[7] == 0.5, "std recovers after the overflow leaves");
+    for (size_t i = 0; i < 8; i++) {
+        ASSERT(!(mlr_isfinite(mean_out[i]) == 0 && !mlr_isnan(mean_out[i])), "no Inf in mean output");
+        ASSERT(!(mlr_isfinite(std_out[i]) == 0 && !mlr_isnan(std_out[i])), "no Inf in std output");
+    }
+    PASS("overflowing windows are NaN and recover");
+}
+
 static int test_rolling_nan_recovery(void) {
     // A bad value affects only the windows containing it
     enum { N = 20, W = 3 };
@@ -327,6 +349,7 @@ int test_rolling(void) {
     failures += test_rolling_shift_invariance();
     failures += test_rolling_nan_recovery();
     failures += test_rolling_outliers_and_trend();
+    failures += test_rolling_overflow_windows();
     failures += test_ewma_vol_known_answer();
     failures += test_ewma_vol_invalid_inputs();
     failures += test_ewma_vol_missing_data();
