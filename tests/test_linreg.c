@@ -141,6 +141,30 @@ static int test_linreg_invalid_inputs(void) {
     PASS("linreg invalid inputs");
 }
 
+static int test_linreg_ill_conditioned(void) {
+    // Two nearly collinear columns: x2 = x1 + 1e-7 * z, condition number
+    // around 1e8. The normal equations lose this problem (cond^2 * eps > 1);
+    // QR on the design keeps about 8 digits. y = 3 x1 - 2 x2 + 1.
+    enum { N = 40 };
+    static double X[N * 2], y[N];
+    unsigned long long state = 77;
+    for (size_t i = 0; i < N; i++) {
+        double x1 = test_lcg_gauss(&state);
+        double z = test_lcg_gauss(&state);
+        X[i * 2] = x1;
+        X[i * 2 + 1] = x1 + 1e-7 * z;
+        y[i] = 3.0 * X[i * 2] - 2.0 * X[i * 2 + 1] + 1.0;
+    }
+    mlr_lin_model model;
+    ASSERT(mlr_lin_model_init(&model, 2) == MLR_OK, "init OK");
+    ASSERT(mlr_linreg_fit(X, y, N, 2, 0.0, &model) == MLR_OK, "ill-conditioned fit is solvable");
+    ASSERT_NEAR(model.w[0], 3.0, 1e-5, "w1 at condition number 1e8");
+    ASSERT_NEAR(model.w[1], -2.0, 1e-5, "w2 at condition number 1e8");
+    ASSERT_NEAR(model.b, 1.0, 1e-6, "intercept at condition number 1e8");
+    mlr_lin_model_free(&model);
+    PASS("linreg ill-conditioned");
+}
+
 static int test_linreg_underdetermined(void) {
     // n <= d with no ridge is rank deficient
     double X[] = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
@@ -169,6 +193,18 @@ static int test_lin_model_init_free(void) {
     // An allocation that cannot succeed (d * sizeof(double) overflows size_t)
     ASSERT(mlr_lin_model_init(&model, SIZE_MAX / 2) == MLR_ENOMEM, "impossible allocation -> ENOMEM");
     ASSERT(model.w == NULL && model.d == 0, "model left empty after ENOMEM");
+
+#if SIZE_MAX <= 0xFFFFFFFFu
+    // 32-bit size_t: a model that fits in memory but whose ridge-augmented
+    // design (d + n rows of d doubles) does not. The size check must fire
+    // before any arithmetic wraps and before the inputs are read.
+    enum { BIG_D = 1 << 16 };
+    static double X2[2 * BIG_D];
+    double y2[] = {1.0, 2.0};
+    ASSERT(mlr_lin_model_init(&model, BIG_D) == MLR_OK, "init d=2^16 OK");
+    ASSERT(mlr_linreg_fit(X2, y2, 2, BIG_D, 1.0, &model) == MLR_ENOMEM, "unallocatable design -> ENOMEM");
+    mlr_lin_model_free(&model);
+#endif
     PASS("lin_model init/free");
 }
 
@@ -179,6 +215,7 @@ int test_linreg(void) {
     failures += test_linreg_ridge_on_rank_deficient();
     failures += test_linreg_scale_invariance();
     failures += test_linreg_invalid_inputs();
+    failures += test_linreg_ill_conditioned();
     failures += test_linreg_underdetermined();
     failures += test_lin_model_init_free();
     return failures;

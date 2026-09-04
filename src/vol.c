@@ -251,23 +251,8 @@ mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out) 
     return MLR_OK;
 }
 
-mlr_status mlr_garch_filter(const mlr_garch *model, const double *returns, size_t n,
-                            double *sigma_out) {
-    if (model == NULL || returns == NULL || sigma_out == NULL || n == 0) {
-        return MLR_EINVAL;
-    }
-    if (!garch_params_valid(model->omega, model->alpha, model->beta)) {
-        return MLR_EINVAL;
-    }
-    if (!mlr_isfinite(model->backcast) || model->backcast < 0.0) {
-        return MLR_EINVAL;
-    }
-
-    double backcast = model->backcast > 0.0
-                          ? model->backcast
-                          : model->omega / (1.0 - model->alpha - model->beta);
-    double s2 = garch_seed(model->omega, model->alpha, model->beta, backcast);
-
+static mlr_status garch_run(const mlr_garch *model, double s2, const double *returns, size_t n,
+                            double *MLR_RESTRICT sigma_out) {
     for (size_t t = 0; t < n; t++) {
         // Extreme parameters or returns can overflow the recursion; fail
         // rather than emit Inf
@@ -287,7 +272,41 @@ mlr_status mlr_garch_filter(const mlr_garch *model, const double *returns, size_
     return MLR_OK;
 }
 
-mlr_status mlr_garch_forecast(const mlr_garch *model, size_t horizon, double *sigma_out) {
+mlr_status mlr_garch_filter(const mlr_garch *model, const double *returns, size_t n,
+                            double *MLR_RESTRICT sigma_out) {
+    if (model == NULL || returns == NULL || sigma_out == NULL || n == 0) {
+        return MLR_EINVAL;
+    }
+    if (!garch_params_valid(model->omega, model->alpha, model->beta)) {
+        return MLR_EINVAL;
+    }
+    if (!mlr_isfinite(model->backcast) || model->backcast < 0.0) {
+        return MLR_EINVAL;
+    }
+
+    double backcast = model->backcast > 0.0
+                          ? model->backcast
+                          : model->omega / (1.0 - model->alpha - model->beta);
+    double s2 = garch_seed(model->omega, model->alpha, model->beta, backcast);
+    return garch_run(model, s2, returns, n, sigma_out);
+}
+
+mlr_status mlr_garch_filter_from(const mlr_garch *model, double sigma2_first,
+                                 const double *returns, size_t n,
+                                 double *MLR_RESTRICT sigma_out) {
+    if (model == NULL || returns == NULL || sigma_out == NULL || n == 0) {
+        return MLR_EINVAL;
+    }
+    if (!garch_params_valid(model->omega, model->alpha, model->beta)) {
+        return MLR_EINVAL;
+    }
+    if (!mlr_isfinite(sigma2_first) || sigma2_first <= 0.0) {
+        return MLR_EINVAL;
+    }
+    return garch_run(model, sigma2_first, returns, n, sigma_out);
+}
+
+mlr_status mlr_garch_forecast(const mlr_garch *model, size_t horizon, double *MLR_RESTRICT sigma_out) {
     if (model == NULL || sigma_out == NULL || horizon == 0) {
         return MLR_EINVAL;
     }
@@ -328,7 +347,7 @@ static double finite_or_nan(double x) {
     return mlr_isfinite(x) ? x : MLR_NAN;
 }
 
-mlr_status mlr_parkinson_vol(const double *high, const double *low, size_t n, double *out) {
+mlr_status mlr_parkinson_vol(const double *high, const double *low, size_t n, double *MLR_RESTRICT out) {
     if (high == NULL || low == NULL || out == NULL || n == 0) {
         return MLR_EINVAL;
     }
@@ -347,7 +366,7 @@ mlr_status mlr_parkinson_vol(const double *high, const double *low, size_t n, do
 
 mlr_status mlr_garman_klass_vol(const double *open, const double *high,
                                 const double *low, const double *close,
-                                size_t n, double *out) {
+                                size_t n, double *MLR_RESTRICT out) {
     if (open == NULL || high == NULL || low == NULL || close == NULL || out == NULL || n == 0) {
         return MLR_EINVAL;
     }

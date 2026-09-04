@@ -82,6 +82,13 @@ mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out);
  * series gives exactly the prefix of the full filter, and filtering the fit
  * sample ends at sigma2_next.
  *
+ * This function always starts from the backcast. To continue a fitted model
+ * onto the data that follows the fit sample, either filter the fit sample
+ * and the new data together, or call mlr_garch_filter_from with
+ * model->sigma2_next; filtering the new data alone with this function
+ * restarts the recursion from the pre-sample seed and is wrong for the
+ * first few dozen periods.
+ *
  * A non-finite return (missing data) does not affect sigma_out[t], which
  * was already determined; the recursion substitutes the conditional
  * expectation of r[t]^2 (the current variance) and carries on.
@@ -97,7 +104,27 @@ mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out);
  *         output is Inf
  */
 mlr_status mlr_garch_filter(const mlr_garch *model, const double *returns, size_t n,
-                            double *sigma_out);
+                            double *MLR_RESTRICT sigma_out);
+
+/**
+ * @brief Conditional volatility path starting from a given variance
+ *
+ * Same recursion as mlr_garch_filter, but sigma2[0] = sigma2_first instead of
+ * the backcast rule. With sigma2_first = model->sigma2_next and returns
+ * being the data that follows the fit sample, the output continues the
+ * in-sample path exactly: it equals the tail of mlr_garch_filter over the
+ * fit sample and the new data together.
+ *
+ * @param model Fitted (or manually constructed) model
+ * @param sigma2_first Conditional variance of period 0 (finite, > 0)
+ * @param returns Mean-zero returns (length n)
+ * @param n Number of returns
+ * @param sigma_out Output per-period sigma (length n, pre-allocated)
+ * @return As mlr_garch_filter; MLR_EINVAL if sigma2_first is not finite and positive
+ */
+mlr_status mlr_garch_filter_from(const mlr_garch *model, double sigma2_first,
+                                 const double *returns, size_t n,
+                                 double *MLR_RESTRICT sigma_out);
 
 /**
  * @brief Multi-step volatility forecast from the end of the fit sample
@@ -112,7 +139,7 @@ mlr_status mlr_garch_filter(const mlr_garch *model, const double *returns, size_
  * @return MLR_OK on success, MLR_EINVAL on invalid input or parameters,
  *         MLR_EDOMAIN if the variance path overflows
  */
-mlr_status mlr_garch_forecast(const mlr_garch *model, size_t horizon, double *sigma_out);
+mlr_status mlr_garch_forecast(const mlr_garch *model, size_t horizon, double *MLR_RESTRICT sigma_out);
 
 /**
  * @brief Parkinson range-based volatility, per bar
@@ -128,7 +155,7 @@ mlr_status mlr_garch_forecast(const mlr_garch *model, size_t horizon, double *si
  * @param out Output per-bar sigma (length n, pre-allocated)
  * @return MLR_OK on success, MLR_EINVAL on invalid input
  */
-mlr_status mlr_parkinson_vol(const double *high, const double *low, size_t n, double *out);
+mlr_status mlr_parkinson_vol(const double *high, const double *low, size_t n, double *MLR_RESTRICT out);
 
 /**
  * @brief Garman-Klass range-based volatility, per bar
@@ -150,7 +177,7 @@ mlr_status mlr_parkinson_vol(const double *high, const double *low, size_t n, do
  */
 mlr_status mlr_garman_klass_vol(const double *open, const double *high,
                                 const double *low, const double *close,
-                                size_t n, double *out);
+                                size_t n, double *MLR_RESTRICT out);
 
 #ifdef __cplusplus
 }

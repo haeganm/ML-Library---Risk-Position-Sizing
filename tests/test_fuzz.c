@@ -75,6 +75,11 @@ static int test_fuzz_sweep(void) {
         }
         s = mlr_garch_forecast(&hand, 1 + (size_t)(test_lcg_u01(&st) * 50), out);
         ASSERT(known_status(s), "hand-built forecast status");
+        s = mlr_garch_filter_from(&hand, random_value(&st), a, n, out);
+        ASSERT(known_status(s), "filter_from status");
+        if (s == MLR_OK) {
+            for (size_t i = 0; i < n; i++) ASSERT(mlr_isfinite(out[i]), "filter_from output finite");
+        }
 
         s = mlr_parkinson_vol(a, b, n, out);
         ASSERT(known_status(s), "parkinson status");

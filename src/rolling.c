@@ -13,7 +13,7 @@ static double first_finite(const double *x, size_t n) {
     return 0.0;
 }
 
-mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *out) {
+mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *MLR_RESTRICT out) {
     if (x == NULL || out == NULL || n == 0 || window == 0) {
         return MLR_EINVAL;
     }
@@ -59,7 +59,7 @@ mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *ou
     return MLR_OK;
 }
 
-mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *out) {
+mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *MLR_RESTRICT out) {
     if (x == NULL || out == NULL || n == 0 || window == 0) {
         return MLR_EINVAL;
     }
@@ -145,7 +145,7 @@ static int usable_return(double r) {
     return mlr_isfinite(r) && mlr_isfinite(r * r);
 }
 
-mlr_status mlr_ewma_vol(const double *returns, size_t n, double lambda, double *out) {
+mlr_status mlr_ewma_vol(const double *returns, size_t n, double lambda, double *MLR_RESTRICT out) {
     if (returns == NULL || out == NULL || n == 0) {
         return MLR_EINVAL;
     }

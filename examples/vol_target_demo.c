@@ -85,11 +85,11 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        // Filter from the start of the training window through the end of
-        // the test window: sigma[t] uses returns before t, parameters from
-        // the training window only
-        if (mlr_garch_filter(&model, returns + s->train_start, s->test_end - s->train_start,
-                             sigma + s->train_start) != MLR_OK) {
+        // Continue the fitted model onto the test window from the variance
+        // state at the end of training: sigma[t] uses returns before t,
+        // parameters from the training window only
+        if (mlr_garch_filter_from(&model, model.sigma2_next, returns + s->test_start,
+                                  s->test_end - s->test_start, sigma + s->test_start) != MLR_OK) {
             fprintf(stderr, "fold %zu: GARCH filter failed\n", k);
             return 1;
         }

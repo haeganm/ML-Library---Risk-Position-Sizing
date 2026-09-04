@@ -40,7 +40,8 @@ extern "C" {
  * @param target_vol Target per-period volatility (finite, > 0)
  * @param equity Account equity (finite, > 0)
  * @param price Asset price (length n)
- * @param max_leverage Maximum notional / equity (finite, > 0)
+ * @param max_leverage Maximum notional / equity (finite, > 0; the product
+ *                     max_leverage * equity must be finite too)
  * @param n Length of arrays
  * @param position_out Output position sizes (length n, pre-allocated)
  * @return MLR_OK on success, MLR_EINVAL on invalid input
@@ -52,7 +53,7 @@ mlr_status mlr_vol_target_position(
     const double *price,
     double max_leverage,
     size_t n,
-    double *position_out
+    double *MLR_RESTRICT position_out
 );
 
 /**
@@ -61,10 +62,12 @@ mlr_status mlr_vol_target_position(
  *   f = fraction * mean(returns) / sample_variance(returns)
  *
  * The continuous mean-variance Kelly approximation, with the n-1 variance
- * denominator. The mean is the raw mean, not the excess over a risk-free
- * rate; subtract the funding rate from returns first if that matters. With
- * short samples mean/variance is a strongly upward-biased estimate of the
- * true edge, so use a fraction well below 1.
+ * denominator. This is a sizing utility, not an allocation model: it uses
+ * the raw historical mean, not the excess over a funding rate, and knows
+ * nothing about estimation error, fat tails, drawdown tolerance, or other
+ * positions. mean/variance from a short sample is a strongly upward-biased
+ * estimate of the true edge, so treat the output as an upper bound and use
+ * a fraction well below 1.
  *
  * f_out may be negative when the sample edge is negative; the caller decides
  * how to act on that (typically: no position).
@@ -96,7 +99,7 @@ mlr_status mlr_kelly_fraction(const double *returns, size_t n, double fraction, 
  * @return MLR_OK on success, MLR_EINVAL on invalid input (including a
  *         non-finite equity value), MLR_EDOMAIN if any equity value is <= 0
  */
-mlr_status mlr_drawdown_scale(const double *equity, size_t n, double max_dd, double *scale_out);
+mlr_status mlr_drawdown_scale(const double *equity, size_t n, double max_dd, double *MLR_RESTRICT scale_out);
 
 #ifdef __cplusplus
 }

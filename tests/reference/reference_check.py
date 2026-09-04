@@ -71,6 +71,7 @@ def build() -> C.CDLL:
         "mlr_ewma_vol": [D, C.c_size_t, C.c_double, D],
         "mlr_garch_fit": [D, C.c_size_t, C.POINTER(Garch)],
         "mlr_garch_filter": [C.POINTER(Garch), D, C.c_size_t, D],
+        "mlr_garch_filter_from": [C.POINTER(Garch), C.c_double, D, C.c_size_t, D],
         "mlr_garch_forecast": [C.POINTER(Garch), C.c_size_t, D],
         "mlr_parkinson_vol": [D, D, C.c_size_t, D],
         "mlr_garman_klass_vol": [D, D, D, D, C.c_size_t, D],
@@ -146,6 +147,12 @@ def garch_fit(r) -> Garch:
 def garch_filter(m: Garch, r):
     r = arr(r); out = np.empty_like(r)
     assert L.mlr_garch_filter(C.byref(m), ptr(r), len(r), ptr(out)) == OK
+    return out
+
+
+def garch_filter_from(m: Garch, s2_first, r):
+    r = arr(r); out = np.empty_like(r)
+    assert L.mlr_garch_filter_from(C.byref(m), s2_first, ptr(r), len(r), ptr(out)) == OK
     return out
 
 
@@ -272,6 +279,14 @@ def check_garch_filter_forecast():
     err = float(np.max(np.abs(ours_f / ref_f - 1)))
     check("garch forecast vs arch forecast (h=1..20)", err < 1e-10, f"max rel err {err:.2e}")
 
+    # Continuation: filter_from(sigma2 at the split) on the tail equals the tail of the full filter
+    half = len(r) // 2
+    full = garch_filter(m, r)
+    s2_split = m.omega + m.alpha * r[half - 1] ** 2 + m.beta * full[half - 1] ** 2
+    cont = garch_filter_from(m, s2_split, r[half:])
+    check("garch filter_from continues the full filter on the tail", np.array_equal(cont, full[half:]),
+          f"max abs diff {max_abs(cont, full[half:]):.1e}; tail filtered alone differs by {abs(garch_filter(m, r[half:])[0] / full[half] - 1):.2f} at its first bar")
+
 
 def check_garch_fit_montecarlo():
     from arch.univariate import GARCH, Normal, ZeroMean
@@ -388,6 +403,26 @@ def check_ridge():
                             float(np.max(np.abs(pred - (X @ w_cf + b_cf)))) / float(np.std(y)))
     check("ridge vs scikit-learn and closed form (d 1..8, ridge 0..10, scale 1e-6..1e6)", worst < 1e-8,
           f"max prediction err / std(y) {worst:.2e}")
+
+    # Ill-conditioned designs: the solver works on the design itself (QR), so
+    # it keeps roughly cond * eps accuracy where the normal equations would
+    # lose cond^2 * eps. Reference: SVD least squares on the augmented system.
+    rows = []
+    for cond in (1e4, 1e6, 1e8, 1e10):
+        n, d = 200, 6
+        U, _ = np.linalg.qr(rng.standard_normal((n, d))); V, _ = np.linalg.qr(rng.standard_normal((d, d)))
+        X = U @ np.diag(np.logspace(0, -math.log10(cond), d)) @ V.T
+        y = X @ rng.standard_normal(d) + 1.0 + 1e-3 * rng.standard_normal(n)
+        for ridge in (0.0, 1e-8):
+            Xc = X - X.mean(0); yc = y - y.mean()
+            Xa = np.vstack([Xc, math.sqrt(ridge) * np.eye(d)]); ya = np.concatenate([yc, np.zeros(d)])
+            w_ref = np.linalg.lstsq(Xa, ya, rcond=None)[0]
+            st, w, b = ridge_fit(X, y, ridge)
+            assert st == OK, (cond, ridge, st)
+            rows.append((cond, ridge, float(np.linalg.norm(w - w_ref) / np.linalg.norm(w_ref))))
+    worst = max(r[2] / (r[0] * 2.2e-16) for r in rows)   # error in units of cond * eps
+    check("ridge on ill-conditioned designs vs SVD least squares (cond 1e4..1e10)", worst < 100,
+          "max error = %.0f x (cond * eps); " % worst + ", ".join(f"cond {c:.0e}: {e:.1e}" for c, rg, e in rows if rg == 0.0))
 
 
 # ------------------------------------------------------------ 8. splits

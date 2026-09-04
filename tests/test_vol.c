@@ -329,6 +329,20 @@ static int test_garch_filter_no_lookahead(void) {
     double s2_next = model.omega + model.alpha * last * last + model.beta * prefix[HALF - 1] * prefix[HALF - 1];
     ASSERT_NEAR(s2_next, model.sigma2_next, 1e-12 * model.sigma2_next,
                 "filter over the fit sample reproduces sigma2_next");
+
+    // Continuing from sigma2_next onto the second half equals the tail of the
+    // full filter, bit for bit; filtering the second half alone does not
+    static double cont[HALF], alone[HALF];
+    ASSERT(mlr_garch_filter_from(&model, model.sigma2_next, returns + HALF, HALF, cont) == MLR_OK, "filter_from OK");
+    for (size_t t = 0; t < HALF; t++) {
+        ASSERT(cont[t] == full[HALF + t], "filter_from(sigma2_next) continues the full filter exactly");
+    }
+    ASSERT(mlr_garch_filter(&model, returns + HALF, HALF, alone) == MLR_OK, "filter of the tail alone OK");
+    ASSERT(alone[0] != full[HALF], "filtering the tail alone restarts from the backcast");
+
+    ASSERT(mlr_garch_filter_from(&model, 0.0, returns, HALF, cont) == MLR_EINVAL, "sigma2_first=0 -> EINVAL");
+    ASSERT(mlr_garch_filter_from(&model, MLR_NAN, returns, HALF, cont) == MLR_EINVAL, "NAN sigma2_first -> EINVAL");
+    ASSERT(mlr_garch_filter_from(&model, 1.0, returns, 0, cont) == MLR_EINVAL, "n=0 -> EINVAL");
     PASS("garch filter no lookahead");
 }
 

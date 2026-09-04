@@ -8,6 +8,8 @@
  * @file rolling.h
  * @brief Rolling statistics and EWMA volatility
  *
+ * Output arrays must not alias inputs (see MLR_RESTRICT in types.h).
+ *
  * Trailing windows: out[i] is computed from x[i-window+1..i]. Indices without
  * a full window are MLR_NAN. A non-finite input (missing data) makes every
  * window containing it MLR_NAN; output recovers once the value leaves the
@@ -28,7 +30,7 @@ extern "C" {
  * @param out Output (length n, pre-allocated)
  * @return MLR_OK on success, MLR_EINVAL on invalid input
  */
-mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *out);
+mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *MLR_RESTRICT out);
 
 /**
  * @brief Rolling standard deviation, O(n) on clean data
@@ -43,7 +45,7 @@ mlr_status mlr_rolling_mean(const double *x, size_t n, size_t window, double *ou
  * @param out Output (length n, pre-allocated)
  * @return MLR_OK on success, MLR_EINVAL on invalid input
  */
-mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *out);
+mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *MLR_RESTRICT out);
 
 /**
  * @brief EWMA volatility forecast (RiskMetrics)
@@ -68,7 +70,7 @@ mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *out
  * @param out Output per-period sigma (length n, pre-allocated)
  * @return MLR_OK on success, MLR_EINVAL on invalid input
  */
-mlr_status mlr_ewma_vol(const double *returns, size_t n, double lambda, double *out);
+mlr_status mlr_ewma_vol(const double *returns, size_t n, double lambda, double *MLR_RESTRICT out);
 
 #ifdef __cplusplus
 }

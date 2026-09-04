@@ -31,6 +31,21 @@ typedef enum {
 #define MLR_NAN NAN
 
 /**
+ * @brief Output arrays must not alias input arrays
+ *
+ * Every function that writes an output array reads its inputs while it
+ * writes, so passing the same buffer as input and output corrupts the
+ * result. The `restrict` qualifier on output parameters states that
+ * contract to the compiler; it is spelled through this macro so the headers
+ * also compile as C++.
+ */
+#ifdef __cplusplus
+#define MLR_RESTRICT
+#else
+#define MLR_RESTRICT restrict
+#endif
+
+/**
  * @brief Check if a value is NaN
  * @param x Value to check
  * @return true if x is NaN, false otherwise

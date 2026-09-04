@@ -92,7 +92,7 @@ mlr_status mlr_linreg_predict(
     size_t n,
     size_t d,
     const mlr_lin_model *model,
-    double *out
+    double *MLR_RESTRICT out
 );
 
 #ifdef __cplusplus

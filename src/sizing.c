@@ -8,7 +8,7 @@ mlr_status mlr_vol_target_position(
     const double *price,
     double max_leverage,
     size_t n,
-    double *position_out
+    double *MLR_RESTRICT position_out
 ) {
     if (sigma == NULL || price == NULL || position_out == NULL || n == 0) {
         return MLR_EINVAL;
@@ -20,8 +20,12 @@ mlr_status mlr_vol_target_position(
     }
 
     // All scalars are positive, so positions are >= 0 and a one-sided
-    // notional cap is sufficient
+    // notional cap is sufficient. The cap itself must be representable or
+    // it would never apply.
     double max_notional = max_leverage * equity;
+    if (!mlr_isfinite(max_notional)) {
+        return MLR_EINVAL;
+    }
 
     for (size_t i = 0; i < n; i++) {
         if (!mlr_isfinite(sigma[i]) || sigma[i] <= 0.0 ||
@@ -79,7 +83,7 @@ mlr_status mlr_kelly_fraction(const double *returns, size_t n, double fraction, 
     return MLR_OK;
 }
 
-mlr_status mlr_drawdown_scale(const double *equity, size_t n, double max_dd, double *scale_out) {
+mlr_status mlr_drawdown_scale(const double *equity, size_t n, double max_dd, double *MLR_RESTRICT scale_out) {
     if (equity == NULL || scale_out == NULL || n == 0) {
         return MLR_EINVAL;
     }

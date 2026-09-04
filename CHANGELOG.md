@@ -1,5 +1,49 @@
 # Changelog
 
+## 3.2.0 (2026-09-04)
+
+A second review (by a reader who had not seen the code before) named six
+weak spots. Four were real bugs or traps and are fixed; the other two were
+design choices and are now either better or better documented.
+
+### Fixed
+
+- `mlr_linreg_fit` sized its work arrays with a constant chosen for 64-bit
+  `size_t`; on 32-bit targets the `d * (d + 1)` product wrapped for d above
+  about 23,000 and the fit could write past its allocation. Sizes are now
+  checked arithmetically before anything is allocated or read.
+- `mlr_vol_target_position` accepted an `equity` and `max_leverage` whose
+  product overflowed, which made the cap infinite and therefore never
+  applied. Such a pair is now `MLR_EINVAL`.
+- Passing the same array as input and output corrupted rolling and EWMA
+  results. Output parameters are now `restrict`-qualified (`MLR_RESTRICT`,
+  empty under C++) and the contract is documented in `types.h`.
+- Continuing a fitted GARCH model onto new data by filtering the new data
+  alone restarted the recursion from the pre-sample backcast (about 30% off
+  at the first period on the test series). `mlr_garch_filter_from` starts
+  from a given variance, and with `model->sigma2_next` reproduces the tail
+  of the full filter bit for bit; the example uses it and the plain filter's
+  header explains the trap.
+
+### Changed
+
+- The regression solver is Householder QR on the centered design with
+  `sqrt(ridge) I` appended, instead of Gaussian elimination on the normal
+  equations. Accuracy is now about condition number times epsilon (2.8e-8
+  at condition number 1e8, where the old solver refused the problem and was
+  already at 1.5e-5 by 1e6). Same API, same results on well-conditioned data
+  to 1e-14.
+- `mlr_kelly_fraction` is documented as a sizing utility and an upper bound,
+  not an allocation model.
+
+### Added
+
+- Reference checks for the QR solver on designs with condition numbers
+  1e4 to 1e10 against SVD least squares, and for `mlr_garch_filter_from`
+  continuation; C tests for the ill-conditioned fit, the cap overflow, the
+  continuation, and the 32-bit size guard.
+
+
 ## 3.1.0 (2026-09-03)
 
 Verification release. Every public function is now compared against an

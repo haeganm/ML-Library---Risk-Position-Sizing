@@ -74,6 +74,8 @@ static int test_vol_target_position_invalid_inputs(void) {
     ASSERT(mlr_vol_target_position(sigma, 0.01, 1e4, price, -1.0, 1, out) == MLR_EINVAL, "negative leverage");
     ASSERT(mlr_vol_target_position(sigma, 0.01, 1e4, price, INFINITY, 1, out) == MLR_EINVAL, "Inf leverage");
     ASSERT(mlr_vol_target_position(sigma, 0.01, 1e4, price, MLR_NAN, 1, out) == MLR_EINVAL, "NAN leverage");
+    // Finite equity and leverage whose product overflows would disable the cap
+    ASSERT(mlr_vol_target_position(sigma, 0.01, 1e200, price, 1e200, 1, out) == MLR_EINVAL, "overflowing cap -> EINVAL");
     PASS("vol_target_position invalid inputs");
 }
 
