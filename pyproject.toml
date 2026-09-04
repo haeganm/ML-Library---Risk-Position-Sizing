@@ -1,5 +1,8 @@
+# numpy is a runtime dependency only. The binding is ctypes and compiles
+# against no Python or numpy headers, so listing numpy here would make every
+# build environment install it from source wherever no wheel exists.
 [build-system]
-requires = ["scikit-build-core>=0.10", "numpy>=1.23"]
+requires = ["scikit-build-core>=0.10"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -77,8 +80,16 @@ test-extras = ["test"]
 # wheel, so it proves the wheel carries its own shared library
 test-command = "python -m pytest {project}/python/tests -q"
 
+[tool.cibuildwheel.linux]
+archs = ["auto64"]
+
 [tool.cibuildwheel.macos]
 environment = { MACOSX_DEPLOYMENT_TARGET = "10.13" }
+
+# 64-bit only: the runtime dependencies have no 32-bit Windows wheels, so a
+# win32 wheel could not be tested or installed
+[tool.cibuildwheel.windows]
+archs = ["AMD64"]
 
 [tool.pytest.ini_options]
 testpaths = ["python/tests"]
