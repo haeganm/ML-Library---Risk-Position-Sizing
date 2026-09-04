@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.3.1 (2026-09-04)
+
+- `mlr_drawdown_scale` is contemporaneous (`scale[t]` uses the close at the
+  end of period `t`) and its header said "multiply position sizes by
+  scale_out" with no lag, in the same file whose timing contract says index
+  `t` must not know period `t`. Applying `scale[t]` to the position held
+  over period `t` de-levers on the bar of a loss using that bar's own close.
+  The header, the sizing contract and the README now say to use
+  `scale[t-1]`; a test pins the alignment. No code change.
+
+
 ## 3.3.0 (2026-09-04)
 
 The last pass before the C API is frozen for language bindings. Three
@@ -75,6 +86,9 @@ reproduced and are fixed here.
   `MLR_ENOMEM` is reserved for a real allocation failure.
 - `tests/reference/requirements.txt` pins `statsmodels`; the reference
   build uses `-O3` to match the CMake Release build.
+- Work arrays in `mlr_linreg_fit` are zero-initialized; GCC's analyzer
+  flagged reads it could not prove written (they were), and removing the
+  question costs nothing next to the solve.
 
 
 ## 3.2.0 (2026-09-04)

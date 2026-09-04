@@ -17,9 +17,10 @@
  * over period t, so its PnL is position_out[t] * price[t-1] * returns[t].
  * Pass price[t-1] as the price for index t. mlr_ewma_vol, mlr_garch_filter
  * and mlr_garch_filter_from already produce forecasts aligned this way.
- * mlr_rolling_std, mlr_rolling_mean and the per-bar range estimators are
- * contemporaneous (index t includes period t) and must be lagged one bar
- * first. Output arrays must not alias inputs (MLR_RESTRICT, types.h).
+ * mlr_rolling_std, mlr_rolling_mean, the per-bar range estimators and
+ * mlr_drawdown_scale are contemporaneous (index t includes period t) and
+ * must be lagged one bar first. Output arrays must not alias inputs
+ * (MLR_RESTRICT, types.h).
  */
 
 #ifdef __cplusplus
@@ -92,7 +93,13 @@ mlr_status mlr_kelly_fraction(const double *returns, size_t n, double fraction, 
  *   scale_out[i] = clamp(1 - dd_i / max_dd, 0, 1)
  *
  * Full exposure at zero drawdown, tapering linearly to zero at dd >= max_dd.
- * Multiply position sizes by scale_out.
+ *
+ * Contemporaneous: scale_out[i] is computed from equity[i], the close at
+ * the END of period i, so it is not known when the position for period i
+ * is entered. To scale position_out[t] (held over period t) use
+ * scale_out[t-1], and 1 for the first position. Applying scale_out[t] to
+ * position_out[t] de-levers on the bar of a loss using that bar's own
+ * close, which is a one-bar lookahead.
  *
  * @param equity Cumulative equity path (length n, all finite and > 0)
  * @param n Number of samples

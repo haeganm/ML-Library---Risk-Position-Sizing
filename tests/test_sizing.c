@@ -126,6 +126,15 @@ static int test_drawdown_scale(void) {
     ASSERT(mlr_drawdown_scale(crash, 2, 0.2, scale) == MLR_OK, "crash path OK");
     ASSERT(scale[1] == 0.0, "drawdown past max_dd scales to 0");
 
+    // Alignment: scale[t] reflects equity[t], the close at the end of
+    // period t. The position held over period t therefore takes scale[t-1];
+    // on the bar of the loss that is still 1, and only the next bar is cut.
+    double path[] = {100.0, 100.0, 50.0, 55.0};
+    ASSERT(mlr_drawdown_scale(path, 4, 0.2, scale) == MLR_OK, "path OK");
+    ASSERT(scale[1] == 1.0 && scale[2] == 0.0, "scale[t] is computed from equity[t] (contemporaneous)");
+    double applied[4] = {1.0, scale[0], scale[1], scale[2]};   // scale for position[t] is scale[t-1]
+    ASSERT(applied[2] == 1.0 && applied[3] == 0.0, "lagged application cuts exposure the bar after the loss, not on it");
+
     ASSERT(mlr_drawdown_scale(equity, 5, 0.0, scale) == MLR_EINVAL, "max_dd=0 -> EINVAL");
     ASSERT(mlr_drawdown_scale(equity, 5, 1.5, scale) == MLR_EINVAL, "max_dd>1 -> EINVAL");
     ASSERT(mlr_drawdown_scale(equity, 5, MLR_NAN, scale) == MLR_EINVAL, "NAN max_dd -> EINVAL");
