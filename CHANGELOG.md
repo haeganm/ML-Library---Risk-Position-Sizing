@@ -26,6 +26,19 @@
 - The Python packaging sits at the repository root rather than in `python/`,
   because a source distribution has to contain `src/` and `include/` and
   those cannot be reached from a subdirectory.
+- A `Release` workflow that builds the sdist and five wheels (Linux x86-64
+  and aarch64, macOS Intel and Apple silicon, Windows x64), tests each wheel
+  on the platform it was built for, installs the sdist from scratch, and
+  publishes to PyPI through trusted publishing, with no API token in the
+  repository. A tag that disagrees with the version in `CMakeLists.txt` is
+  refused before anything is built. See `RELEASING.md`.
+
+### Changed
+
+- The repository is now `haeganm/walkforward`, matching the Python package.
+  GitHub redirects the old address and the earlier releases are unaffected.
+  The C keeps its `mlr_` prefix and its `include/mlrisk/` headers, the way
+  Pillow ships `PIL`.
 
 
 ## 3.3.1 (2026-09-04)

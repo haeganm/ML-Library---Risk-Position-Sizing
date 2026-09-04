@@ -1,0 +1,108 @@
+name: Release
+
+# Builds the wheels and the source distribution, tests every wheel on the
+# platform it was built for, and publishes to PyPI when a version tag is
+# pushed. Publishing uses PyPI trusted publishing, so there is no API token
+# in this repository.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Tag matches the source version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        name: Read the version from CMakeLists.txt
+        run: |
+          version="$(sed -n 's/^project(mlrisk VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
+          if [ -z "$version" ]; then
+            echo "could not read the project version from CMakeLists.txt" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "source version: $version"
+      - name: A tagged build must carry the version it claims
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$tag" != "${{ steps.read.outputs.version }}" ]; then
+            echo "tag $GITHUB_REF_NAME does not match the source version ${{ steps.read.outputs.version }}" >&2
+            exit 1
+          fi
+
+  sdist:
+    name: Source distribution
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: pipx run build --sdist
+      - name: It has to compile from source in a clean directory
+        run: |
+          python -m pip install --upgrade pip
+          cd "$(mktemp -d)"
+          python -m pip install "$GITHUB_WORKSPACE"/dist/*.tar.gz
+          python -c "import walkforward as wf; print(wf.__version__, wf.c_version())"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+
+  wheels:
+    name: Wheel for ${{ matrix.label }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, label: linux-x86_64 }
+          - { os: ubuntu-24.04-arm, label: linux-aarch64 }
+          - { os: macos-15-intel, label: macos-x86_64 }
+          - { os: macos-latest, label: macos-arm64 }
+          - { os: windows-latest, label: windows-amd64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test the wheel
+        uses: pypa/cibuildwheel@v2.21.3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.label }}
+          path: wheelhouse/*.whl
+
+  publish:
+    name: Publish to PyPI
+    needs: [version, sdist, wheels]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/walkforward
+    permissions:
+      id-token: write   # trusted publishing, no API token
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: What is about to be published
+        run: ls -l dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
