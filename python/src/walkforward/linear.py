@@ -73,7 +73,7 @@ class Ridge(_RegressorMixin, _BaseEstimator):
     def __init__(self, ridge: float = 0.0) -> None:
         self.ridge = ridge
 
-    def fit(self, X: Any, y: Any) -> "Ridge":
+    def fit(self, X: Any, y: Any) -> Ridge:
         """Fit the model. Leaves the estimator untouched if the fit fails."""
         design = as_input(X, "X", ndim=2)
         target = as_input(y, "y")

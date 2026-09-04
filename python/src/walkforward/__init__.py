@@ -74,7 +74,7 @@ __all__ = [
 
 def _version() -> str:
     try:
-        from importlib.metadata import PackageNotFoundError, version
+        from importlib.metadata import version
 
         return version("walkforward")
     except Exception:  # pragma: no cover - source checkouts without metadata

@@ -16,7 +16,6 @@ from typing import Any
 
 import numpy as np
 
-from . import _core
 from ._core import Garch, as_count, as_input, check, lib, like, out_like, ptr, same_length
 
 __all__ = [
@@ -315,6 +314,3 @@ def garman_klass_vol(open: Any, high: Any, low: Any, close: Any) -> Any:  # noqa
         "garman_klass_vol",
     )
     return like(out, open)
-
-
-_ = _core  # re-exported for the package namespace

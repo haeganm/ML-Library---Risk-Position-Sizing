@@ -15,7 +15,8 @@ walk-forward.
 from __future__ import annotations
 
 import ctypes
-from typing import Any, Iterator, NamedTuple
+from collections.abc import Iterator
+from typing import Any, NamedTuple
 
 import numpy as np
 

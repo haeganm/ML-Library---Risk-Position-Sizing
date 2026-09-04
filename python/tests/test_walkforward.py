@@ -12,9 +12,7 @@ import math
 
 import numpy as np
 import pytest
-
 import walkforward as wf
-
 
 # --------------------------------------------------------------------------
 # Fixtures
