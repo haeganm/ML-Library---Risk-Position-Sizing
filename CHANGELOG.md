@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 3.4.0 (2026-09-04)
+
+First release published to PyPI as `walkforward`. The C library is unchanged
+from 3.3.1; everything here is the Python package and the machinery to ship
+it.
 
 ### Added
 
