@@ -38,6 +38,10 @@
 
 ### Changed
 
+- The README is rewritten around the Python package, which is how most people
+  will use this, with the C library as its own section rather than the
+  headline. Every measured number is carried over, and both Python snippets
+  in it are executed as part of the checks.
 - The repository is now `haeganm/walkforward`, matching the Python package.
   GitHub redirects the old address and the earlier releases are unaffected.
   The C keeps its `mlr_` prefix and its `include/mlrisk/` headers, the way
