@@ -24,13 +24,13 @@ import walkforward as wf
 
 # The fit assumes mean-zero returns. Demean with the TRAINING mean; the
 # full-sample mean would put the future into the fit.
-train = returns[:1000] - returns[:1000].mean()
-model = wf.garch_fit(train)
+mu = returns[:1000].mean()
+model = wf.garch_fit(returns[:1000] - mu)
 
 # sigma[t] forecasts period t from returns before t. filter_from continues
 # from the variance state the fit ended on, which is what makes the
 # out-of-sample path the same as filtering everything together.
-sigma = model.filter_from(returns[1000:])
+sigma = model.filter_from(returns[1000:] - mu)
 
 # A position held over period t is entered at the close of t-1, so it is
 # sized against the previous close, and earns position * price * return.
@@ -77,12 +77,12 @@ Bad arguments raise. Bad elements are handled per function and documented on eac
 
 ## What it is checked against
 
-The C library underneath is compared on every push to independent implementations, and the numbers are reproducible from `tests/reference/` in the repository.
+The C library underneath is compared on every push to independent implementations. The numbers below come from `tests/reference/reference_check.py` in the repository, which needs only the packages it names.
 
 | Check | Reference | Result |
 |---|---|---|
 | Rolling mean and std, with gaps | pandas | 3.1e-11 |
-| Rolling std at a price level of 1e9 | exact rational arithmetic | 1.7e-15, where a two-pass computation is off by 4.9e-12 |
+| Rolling std at a price level of 1e9 | exact rational arithmetic | 4.4e-16, where a two-pass computation is off by 4.9e-12 |
 | EWMA, predictive alignment | pandas `ewm` shifted one period | 3.5e-18 |
 | GARCH filter and forecast | `arch` | 4.4e-16 relative |
 | GARCH fit over 20 samples | `arch`, same likelihood | 5.0e-7 max parameter difference |

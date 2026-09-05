@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Fixed
+
+- `mlr_garch_fit` could stop at a local maximum on a short sample with no
+  ARCH effect. Its seed grid had no start below beta = 0.8, and from any
+  high-persistence seed Nelder-Mead settled at alpha = 0 with beta near 1,
+  0.2 log-likelihood units short of the maximum at beta = 0, and reported
+  convergence. The grid now includes beta = 0 and 0.5 and one extra start
+  is taken from its best low-persistence point, kept separate from the
+  three high-persistence starts because on a series with a large outlier
+  the low seeds score well on the grid and would otherwise crowd out the
+  starts that find the right answer. Fit time is up by a third (621 ms for
+  100,000 returns). Verified by the new
+  `tests/reference/garch_multistart_check.py`, 108 starts against the fit
+  on thirteen awkward series, and by a C test over 40 short iid samples.
+  Well-behaved samples fit to the same parameters as before to seven
+  decimals.
+- The Python binding read a masked array through its fill values: the mask
+  was dropped by the float64 conversion, so a masked observation was a real
+  number to the C. Masked entries are now NaN, which every function treats
+  as missing.
+- The binding accepted a scalar, `None`, or a datetime series as input
+  because the rank check ran after the conversion that promoted or recast
+  them. A scalar was a one-element series and a datetime became
+  nanoseconds. Both are refused now, before conversion.
+- Paired pandas inputs (`parkinson_vol`, `garman_klass_vol`,
+  `vol_target_position`) were matched by position and the result stamped
+  with the first argument's index, so two Series of the same length on
+  different indexes were silently mispaired. Series arguments must now
+  share an index; `lag` keeps it, slicing does not.
+- A non-integer count such as `inf` raised `OverflowError` instead of the
+  documented `TypeError`; an explicit `purge=` that was too large produced
+  an error blaming a label horizon the caller never passed; the
+  `PurgedWalkForward` docstring claimed every observation after the first
+  training window is tested, which is false when the sample does not end
+  on a whole test window.
+- The source distribution excluded `examples/` and `bench/` but kept the
+  root `CMakeLists.txt`, which builds both when the library is the
+  top-level project, so `cmake -S . -B build` on an unpacked sdist failed
+  at configure. The sdist now carries everything that file builds.
+- The notebook's CI step only checked that no cell raised. The notebook
+  now asserts the numbers the README quotes, so a change in the library
+  that moves them fails the build.
+
 ### Added
 
 - `examples/spy_walk_forward.ipynb`: one model end to end on 25 years of
@@ -9,14 +52,32 @@
   a ridge on a five-day forward return, 41 purged walk-forward folds, a
   GARCH per fold continued with `filter_from`, and 10% volatility
   targeting. It reports the honest out-of-sample number, then shows what
-  skipping the purge and dropping the lags each do to it. CI executes the
-  notebook from a clean checkout.
+  skipping the purge and dropping the lags each do to it, against a
+  control that changes the training rows by the same amount and leaks
+  nothing.
+- `py.typed`, so type checkers use the package's annotations. Metadata 2.4
+  with a license expression, Python version classifiers, source and issue
+  URLs.
+- The release workflow's check job now requires five wheels at the tagged
+  version, each carrying the shared library, and a changelog section for
+  the version; publishing tolerates a re-run after a partial upload.
+  Dependabot watches the actions.
 
 ### Changed
 
+- The README's precision figures for the rolling statistics were stale
+  (1.7e-15 and 6e-16 where the reference suite measures 4.4e-16 and
+  4.1e-15), the 3.4.0 entry claimed a glibc 2.17 floor the wheels do not
+  have, and the purge's effect on the SPY example's Sharpe was attributed
+  to the four leaked rows when a leak-free shift of the same size moves it
+  as much. All three now say what the measurements say. The brute-force
+  check the README described lives in the repository instead of being a
+  claim.
+- The wheel's C is compiled with `-Wpedantic` like the library.
 - `GarchModel.filter_from` docstring says that the seed is a variance and
   the output is volatility, which the C header already said and the
-  example's first draft got wrong.
+  example's first draft got wrong; `GarchModel.forecast` no longer
+  describes a variance decaying toward a volatility.
 
 ## 3.4.1 (2026-09-05)
 
@@ -66,8 +127,9 @@ the configured path from here on.
   repository. A tag that disagrees with the version in `CMakeLists.txt` is
   refused before anything is built. See `RELEASING.md`.
   Validated by running the workflow before any tag: it produces one
-  `py3-none` wheel per platform, each carrying its own shared library, and
-  the Linux wheels need only glibc 2.17 so they install anywhere numpy does.
+  `py3-none` wheel per platform, each carrying its own shared library. The
+  Linux wheels are built on manylinux_2_28 and tagged manylinux_2_17,
+  since the library links nothing newer; numpy sets the real glibc floor.
 
 ### Changed
 
@@ -100,9 +162,10 @@ the configured path from here on.
   window, the accumulators are rebuilt every `window` samples (amortized
   O(1)) and whenever a leaving sample carried almost all of the variance or
   the sum, so an outlier that has left leaves no rounding behind. Measured
-  against exact rational arithmetic: 6e-16 relative for the std and an exact
-  mean after first ticks of 1e9, 1e12 and 1e15 and along a trend from 100
-  to 1e6. Cost: about 6 ns per element for the mean and 20 for the std,
+  against exact rational arithmetic: 4.1e-15 relative for the std and an
+  exact mean after first ticks of 1e9, 1e12 and 1e15 and along a trend from
+  100 to 1e6 (this entry first said 6e-16; the reference suite has always
+  measured 4.1e-15 on this code). Cost: about 6 ns per element for the mean and 20 for the std,
   up from 4 and 15.
 - `mlr_linreg_fit` centered each feature with a plain running sum, so a
   feature at a large level carried rounding of order n * eps * level into

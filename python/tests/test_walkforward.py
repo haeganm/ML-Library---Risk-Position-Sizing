@@ -105,6 +105,36 @@ def test_length_mismatch_is_reported_clearly():
         wf.parkinson_vol([1.0, 2.0, 3.0], [1.0, 2.0])
 
 
+def test_masked_entries_are_missing_not_fill_values():
+    masked = np.ma.array([1.0, 2.0, 999.0, 4.0], mask=[0, 0, 1, 0])
+    with_nan = np.array([1.0, 2.0, np.nan, 4.0])
+    np.testing.assert_array_equal(wf.rolling_mean(masked, 2), wf.rolling_mean(with_nan, 2))
+    np.testing.assert_array_equal(wf.ewma_vol(masked), wf.ewma_vol(with_nan))
+    assert math.isnan(wf.rolling_mean(masked, 4)[-1])
+
+
+@pytest.mark.parametrize("value", [3.0, np.array(7.0), None])
+def test_scalar_input_is_refused_not_promoted(value):
+    with pytest.raises(ValueError, match="scalar"):
+        wf.rolling_mean(value, 1)
+
+
+def test_non_numeric_input_is_refused():
+    with pytest.raises(TypeError, match="numeric"):
+        wf.ewma_vol(np.array(["2020-01-01", "2020-01-02"], dtype="datetime64[D]"))
+
+
+def test_object_arrays_with_none_still_read_as_missing():
+    result = wf.rolling_mean(np.array([1.0, None, 3.0], dtype=object), 1)
+    np.testing.assert_array_equal(result, [1.0, np.nan, 3.0])
+
+
+def test_non_integer_counts_are_a_type_error():
+    for bad in (float("inf"), float("nan"), 1.5, "3"):
+        with pytest.raises(TypeError):
+            wf.lag([1.0, 2.0], bad)
+
+
 # --------------------------------------------------------------------------
 # Timing guarantees
 # --------------------------------------------------------------------------
@@ -318,8 +348,11 @@ def test_too_little_data_yields_no_splits():
 
 
 def test_purge_larger_than_the_training_window_is_rejected():
-    with pytest.raises(ValueError, match="nothing"):
+    with pytest.raises(ValueError, match="label horizon of 20"):
         wf.walk_forward_splits(500, train_size=10, test_size=5, label_horizon=20)
+    with pytest.raises(ValueError) as caught:
+        wf.walk_forward_splits(500, train_size=10, test_size=5, purge=20)
+    assert "horizon" not in str(caught.value)
 
 
 def test_post_train_segment_is_opt_in():
@@ -343,6 +376,9 @@ def test_test_windows_tile_the_sample_by_default():
     cv = wf.PurgedWalkForward(train_size=200, test_size=100)
     tested = np.concatenate([test for _, test in cv.split(np.zeros(1000))])
     assert np.array_equal(tested, np.arange(200, 1000))
+    # A tail shorter than one test window is not tested, as documented.
+    tested = np.concatenate([test for _, test in cv.split(np.zeros(1050))])
+    assert np.array_equal(tested, np.arange(200, 1000))
 
 
 # --------------------------------------------------------------------------
@@ -359,6 +395,22 @@ def test_pandas_input_keeps_its_index():
     assert result.index.equals(index)
     assert result.name == "ret"
     np.testing.assert_array_equal(result.to_numpy(), wf.ewma_vol(series.to_numpy(), 0.94))
+
+
+def test_paired_series_must_share_an_index():
+    pd = pytest.importorskip("pandas")
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    high = pd.Series([101.0, 102.0, 103.0, 104.0, 105.0], index=index)
+    low = pd.Series([99.0, 100.0, 101.0, 102.0, 103.0], index=index)
+    aligned = wf.parkinson_vol(high, low)
+    np.testing.assert_array_equal(aligned.to_numpy(), wf.parkinson_vol(high.to_numpy(), low.to_numpy()))
+    with pytest.raises(ValueError, match="different indexes"):
+        wf.parkinson_vol(high, low.sort_index(ascending=False))
+    with pytest.raises(ValueError, match="different indexes"):
+        wf.vol_target_position(high[1:], 0.01, 1.0, high[:-1], 2.0)
+    # Realigning with lag keeps the index and is the documented way.
+    sized = wf.vol_target_position(wf.ewma_vol(high.pct_change().fillna(0.0)), 0.01, 1.0, wf.lag(high), 2.0)
+    assert sized.index.equals(index)
 
 
 def test_works_with_sklearn_cross_val_score():

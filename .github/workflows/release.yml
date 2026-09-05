@@ -89,9 +89,10 @@ jobs:
 
   check:
     name: Distributions are fit to publish
-    needs: [sdist, wheels]
+    needs: [version, sdist, wheels]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: dist-*
@@ -105,6 +106,21 @@ jobs:
           python -m pip install twine
           ls -l dist
           python -m twine check --strict dist/*
+      - name: Five wheels, each carrying the shared library, all at the source version
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          count=0
+          for wheel in dist/*.whl; do
+            count=$((count + 1))
+            case "$wheel" in dist/walkforward-"$VERSION"-*) ;; *) echo "$wheel is not version $VERSION" >&2; exit 1;; esac
+            python -m zipfile -l "$wheel" | grep -q "walkforward/walkforward_native\." || { echo "$wheel has no shared library" >&2; exit 1; }
+          done
+          [ "$count" -eq 5 ] || { echo "expected 5 wheels, found $count" >&2; exit 1; }
+      - name: The changelog has a section for this version
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: grep -q "^## $VERSION " CHANGELOG.md || { echo "CHANGELOG.md has no '## $VERSION' section" >&2; exit 1; }
 
   publish:
     name: Publish to PyPI
@@ -125,3 +141,5 @@ jobs:
       - name: What is about to be published
         run: ls -l dist
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true   # a re-run after a partial upload finishes the job

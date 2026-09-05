@@ -20,6 +20,12 @@ compile_commands.json
 *.pdb
 *.dSYM/
 
+# Python packaging
+dist/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+
 # IDE / OS
 .vscode/
 .idea/

@@ -16,7 +16,18 @@ from typing import Any
 
 import numpy as np
 
-from ._core import Garch, as_count, as_input, check, lib, like, out_like, ptr, same_length
+from ._core import (
+    Garch,
+    as_count,
+    as_input,
+    check,
+    lib,
+    like,
+    out_like,
+    ptr,
+    same_index,
+    same_length,
+)
 
 __all__ = [
     "GARCH_MAX_PERSISTENCE",
@@ -200,9 +211,10 @@ class GarchModel:
     def forecast(self, horizon: int) -> np.ndarray:
         """Volatility ``1..horizon`` periods past the end of the fit sample.
 
-        ``out[h]`` is the forecast for period ``T + 1 + h``, decaying from
-        :attr:`sigma2_next` toward :attr:`unconditional_vol` at rate
-        :attr:`persistence`.
+        ``out[h]`` is the forecast for period ``T + 1 + h``. The variance
+        decays from :attr:`sigma2_next` toward :attr:`unconditional_variance`
+        by a factor of :attr:`persistence` per period; the output is its
+        square root.
         """
         steps = as_count(horizon, "horizon", minimum=1)
         out = out_like(steps)
@@ -280,6 +292,7 @@ def parkinson_vol(high: Any, low: Any) -> Any:
     Range estimators are biased slightly low on discretely sampled bars, since
     the observed extremes understate the continuous ones.
     """
+    same_index("high", high, "low", low)
     h = as_input(high, "high")
     low_array = as_input(low, "low")
     same_length("high", h, "low", low_array)
@@ -302,6 +315,8 @@ def garman_klass_vol(open: Any, high: Any, low: Any, close: Any) -> Any:  # noqa
     and give ``NaN``, as do non-finite and non-positive prices. On a
     consistent bar the estimator cannot go negative.
     """
+    for name, series in (("high", high), ("low", low), ("close", close)):
+        same_index("open", open, name, series)
     o = as_input(open, "open")
     h = as_input(high, "high")
     low_array = as_input(low, "low")

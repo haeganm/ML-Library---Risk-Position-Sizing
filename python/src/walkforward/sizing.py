@@ -21,7 +21,7 @@ from __future__ import annotations
 import ctypes
 from typing import Any
 
-from ._core import as_input, check, lib, like, out_like, ptr, same_length
+from ._core import as_input, check, lib, like, out_like, ptr, same_index, same_length
 
 __all__ = ["drawdown_scale", "kelly_fraction", "vol_target_position"]
 
@@ -64,6 +64,7 @@ def vol_target_position(
     non-positive, or extreme enough to make the position unrepresentable gets
     a position of zero rather than a bad number.
     """
+    same_index("sigma", sigma, "price", price)
     sigma_array = as_input(sigma, "sigma")
     price_array = as_input(price, "price")
     same_length("sigma", sigma_array, "price", price_array)

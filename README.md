@@ -13,7 +13,7 @@ Most backtests that look good are quietly peeking one bar ahead. The estimator t
 - **Purging that asks the right question.** `PurgedWalkForward` takes a label horizon, not a purge count, because `purge = h - 1` is the part people get wrong. It drops into `cross_val_score`.
 - **GARCH(1,1) by maximum likelihood** with no optimizer dependency, checked against the `arch` package on identical samples and identical likelihoods, and invariant to the units of the returns: a fit on returns scaled by 1e-8 gives the same alpha and beta as one scaled by 1e6.
 - **Sizing that fails closed.** Volatility targeting with a notional cap, mean-variance Kelly, drawdown scaling. A bad price gives a zero position, never a NaN one. A leverage cap that would overflow is refused rather than silently ignored.
-- **Rolling statistics in O(n)** that stay accurate at index levels (1.7e-15 at a price level of 1e9, where a plain two-pass computation is already off by 4.9e-12), along a trend from 100 to 1e6, and after a bad tick has left the window.
+- **Rolling statistics in O(n)** that stay accurate at index levels (4.4e-16 at a price level of 1e9, where a plain two-pass computation is already off by 4.9e-12), along a trend from 100 to 1e6, and after a bad tick has left the window.
 - **Ridge by Householder QR** on the centered design, so the intercept is unpenalized and accuracy stays at condition number times epsilon where the normal equations would square it.
 
 The C builds as strict ISO C11 under GCC, Clang and MSVC with warnings as errors and no fused multiply-add, so results agree across compilers to the last bit. CI runs the suite on Linux (gcc and clang, 64- and 32-bit), macOS and Windows, under AddressSanitizer and UBSan, installs the library and consumes it through `find_package` and `pkg-config`, compiles the public headers as C++17, builds and tests the Python wheel on three platforms, and compares every function against pandas, numpy, scikit-learn and `arch`.
@@ -35,13 +35,13 @@ import walkforward as wf
 
 # The fit assumes mean-zero returns. Demean with the TRAINING mean; the
 # full-sample mean would put the future into the fit.
-train = returns[:1000] - returns[:1000].mean()
-model = wf.garch_fit(train)
+mu = returns[:1000].mean()
+model = wf.garch_fit(returns[:1000] - mu)
 
 # sigma[t] forecasts period t from returns before t. filter_from continues
 # from the variance state the fit ended on, which is what makes the
 # out-of-sample path identical to filtering everything together.
-sigma = model.filter_from(returns[1000:])
+sigma = model.filter_from(returns[1000:] - mu)
 
 # A position held over period t is entered at the close of t-1, so it is
 # sized against the previous close, and earns position * price * return.
@@ -84,33 +84,34 @@ There is no `embargo` argument, on purpose. An embargo protects training data th
 | Vol target, long only | 0.79 | 7.9% | 10.1% | 27% |
 | Vol target, ridge signal | 0.18 | 1.9% | 10.1% | 35% |
 
-The sizing does what it says: realised volatility is 10.1% against a 10% target, and the long-only line beats buy and hold on Sharpe and halves the drawdown with nothing but variance forecasts. The ridge signal has no edge. Its hit rate is 53% and its correlation with the label is 0.04, and going with its sign costs 0.6 of Sharpe. That is the honest number for six textbook features on SPY, and the notebook reports it rather than tuning until it looks better.
+The sizing does what it says: realised volatility is 10.1% against a 10% target, and the long-only line beats buy and hold on Sharpe and halves the drawdown with nothing but variance forecasts. The ridge signal has no edge. Its hit rate is 53% and its correlation with the label is 0.04, and going with its sign costs 0.6 of Sharpe. That is the honest number for six textbook features on SPY.
 
-Then the same model is run twice more with one line changed each time:
+Then the same model is run with one line changed each time, plus a control:
 
 | Change | Sharpe |
 |---|---|
 | None | 0.18 |
-| Tell the splitter labels are one day long, so nothing is purged | 0.27 |
+| Purge nothing, as if the labels were one day long | 0.27 |
+| Control: shift every training window back four bars, leaking nothing | 0.10 |
 | Drop every `lag`, so a feature for bar t includes bar t | 14.6 |
 
-Four leaked rows per fold are worth a few hundredths of Sharpe at this horizon; longer labels and shorter test windows leak more. The second change is the one that matters. It produces a Sharpe of 14 from a model with no edge, and nothing in the code that produced it looks wrong. That is what the timing convention and `lag` exist to prevent.
+Skipping the purge moves the Sharpe by 0.08, and the control moves it by 0.08 the other way while changing the same number of training rows, so on this run the purge's effect is inside the noise of a single Sharpe. The leak it removes is real by construction and grows with the label horizon; it is small at five days against 1260 training rows. The last change is the one that matters. It produces a Sharpe of 14 from a model with no edge, and nothing in the code that produced it looks wrong. That is what the timing convention and `lag` exist to prevent.
 
 ## How it stays honest
 
 **The forecast at t cannot see t.** `ewma_vol` emits the forecast before it absorbs `returns[t]`; the GARCH filter seeds from the model's stored backcast rather than from the series it is filtering, which is where the 2.x filter leaked. Both are tested for prefix stability (filtering the first half of a series gives the first half of the full filter, exactly) and for shock timing (a spike at bar k moves the output at k+1 and nothing before it). The reference suite goes further: for 40 random series it rewrites everything after a random `t` and asserts every output through `t` is bit-identical.
 
-**The fitter is checked against something it did not write.** `arch` 7.2.0 fits the same simulated sample with the same backcast, so both sides maximize the same function. On the first reference sample walkforward reaches alpha 0.0810353, beta 0.8835013 and log-likelihood 9259.9490823; `arch` reaches 0.0810352, 0.8835015 and 9259.9490821. Across 20 fresh samples the largest parameter difference is 5e-7. `arch` needs the returns multiplied by 100 to converge on these samples; walkforward fits them raw, because its Nelder-Mead stops on simplex diameter as well as function value and its feasibility bound on omega is positivity rather than an absolute floor.
+**The fitter is checked against something it did not write.** `arch` 7.2.0 fits the same simulated sample with the same backcast, so both sides maximize the same function. On the first reference sample walkforward reaches alpha 0.0810352, beta 0.8835013 and log-likelihood 9259.9490822; `arch` reaches 0.0810352, 0.8835015 and 9259.9490821. Across 20 fresh samples the largest parameter difference is 5e-7. `arch` needs the returns multiplied by 100 to converge on these samples; walkforward fits them raw, because its Nelder-Mead stops on simplex diameter as well as function value and its feasibility bound on omega is positivity rather than an absolute floor.
 
-**The fitter was checked against brute force.** A 108-start search on the identical likelihood was run over eleven series built to be awkward: near-IGARCH, no ARCH effect, t(3) innovations, a 50-sigma outlier, a fourfold variance regime switch, n = 100, and SPY, BTC and EURUSD. A single Nelder-Mead run from the best grid point lost on three of them, by up to 1.7 log-likelihood units. The fitter now starts from its three best grid points and restarts each until that stops helping; it matches the brute-force optimum on ten of the eleven to 1e-10 and beats it on the outlier series.
+**The fitter is checked against brute force.** `tests/reference/garch_multistart_check.py` runs 108 Nelder-Mead starts on the identical likelihood over thirteen series built to be awkward: near-IGARCH, no ARCH effect, t(3) innovations, a 50-sigma outlier and a fourfold variance regime switch, each at n = 1500 and n = 100, plus SPY. A single start from the best grid point lost on three of them, by up to 1.7 log-likelihood units, which is why the fitter now runs several starts and restarts each until that stops helping. The last miss the script found was a 100-observation series with no ARCH effect, whose maximum sits at beta = 0: from any high-persistence seed the optimizer settled at alpha = 0 with beta near 1, 0.2 log-likelihood units short, and reported convergence. The grid now carries low-persistence seeds and one start is taken from them. The fit is within 3e-11 log-likelihood units of the brute-force optimum on all thirteen series.
 
-**The fit, the likelihood and the filter share one recursion step.** `omega + alpha*r*r + beta*s2` and `omega + alpha*(r*r) + beta*s2` differ by an ulp on about a third of steps, and when the fit computed `sigma2_next` one way and the filter stepped the other, the documented bit-exact continuation failed for 12% of fit samples by one ulp that then propagated. One step function now serves all three, checked across 120 fits.
+**The fit, the likelihood and the filter share one recursion step.** `omega + alpha*r*r + beta*s2` and `omega + alpha*(r*r) + beta*s2` differ by an ulp on about a third of steps, and when the fit computed `sigma2_next` one way and the filter stepped the other, the documented bit-exact continuation failed for 12% of fit samples by one ulp that then propagated. One step function now serves all three, checked on 60 seeds in the C suite and 60 more in the reference suite.
 
 **Missing data does not poison state.** A NaN return leaves the forecast already made untouched and carries the recursion forward. A NaN inside a rolling window makes that window NaN and nothing else. A finite return whose square overflows is treated as missing rather than turning every later sigma into Inf.
 
 **The API does not make the wrong thing easy.** In C, output arrays are `restrict`-qualified and documented as non-aliasing. In Python the binding allocates every output itself, so a numpy view cannot violate that contract at all. Continuing a fitted GARCH onto new data has its own entry point, because the plain filter on new data alone restarts from the backcast and is off by tens of percent for the first few dozen periods.
 
-**The tests were mutation-tested.** Eleven deliberate breakages (drop the ridge term, drop the offset shift, drop each overflow guard, revert the optimizer criterion, revert the EWMA alignment) were compiled against the suite; ten failed at least one assertion and the eleventh is unreachable through the public API.
+**The tests were tried against broken code, by hand.** Eleven deliberate breakages (drop the ridge term, drop the offset shift, drop each overflow guard, revert the optimizer criterion, revert the EWMA alignment) were compiled against the suite before 3.1.0; ten failed at least one assertion and the eleventh is unreachable through the public API. This was a one-off exercise, not a harness in the repository.
 
 **Every function is fed garbage on every run.** A fuzz sweep runs 4000 rounds, 13 to 18 calls each, over the whole API with random sizes and contents (NaN, Inf, denormals, 1e308, negative zero, `SIZE_MAX` arguments) under AddressSanitizer and UBSan in CI, checking the promises rather than the numbers. Every fourth round is clean so the functions that demand finite input are reached on their success paths too; the first version of the sweep never once fitted a GARCH model, because an all-finite draw of a hundred values had probability 9e-6. Its findings so far: a denormal price made `equity / price` overflow past the leverage cap, and a hand-built model with omega near 1e308 made the filter emit Inf while reporting success. Both fail closed now.
 
@@ -143,8 +144,8 @@ For labels built from `h` periods, pass `label_horizon=h` and the last `h-1` tra
 | Check | Reference | Result |
 |---|---|---|
 | Rolling mean and std, windows 1 to n, NaN and Inf gaps | pandas `rolling` | 3.1e-11 |
-| Rolling std at price level 1e9 | exact rational arithmetic | 1.7e-15, where a two-pass computation is off by 4.9e-12 |
-| Rolling mean and std after a bad first tick of 1e9 to 1e15, and along a trend 100 to 1e6 | exact rational arithmetic | 6e-16 std, exact mean |
+| Rolling std at price level 1e9 | exact rational arithmetic | 4.4e-16, where a two-pass computation is off by 4.9e-12 |
+| Rolling mean and std after a bad first tick of 1e9 to 1e15, and along a trend 100 to 1e6 | exact rational arithmetic | 4.1e-15 std, exact mean |
 | EWMA, predictive alignment | pandas `ewm(adjust=False)` shifted one period | 3.5e-18 |
 | GARCH filter and 20-step forecast | `arch` | 4.4e-16 and 8.9e-16 relative |
 | GARCH fit, 20 samples, same likelihood | `arch` | 5.0e-7 max parameter difference |
@@ -195,9 +196,9 @@ Apple M-series, clang, `-O3`, best of 5. Configure with `-DMLRISK_BUILD_BENCH=ON
 | `rolling_std`, window 50 | 10,000,000 | 204 ms | 20.4 |
 | `ewma_vol` | 10,000,000 | 39 ms | 3.9 |
 | GARCH filter | 10,000,000 | 49 ms | 4.9 |
-| GARCH fit | 100,000 | 506 ms | three starts, about 1400 likelihood evaluations |
+| GARCH fit | 100,000 | 621 ms | four starts, about 1900 likelihood evaluations |
 
-Each streaming row is within 10% of ten times the row for a tenth of n. The fit is linear in n because a Nelder-Mead start takes about 150 iterations whatever the sample size.
+The bench also runs each function at a tenth and a hundredth of n and prints the ratio; the streaming rows scale by 10.0x per decade. The fit is linear in n because a Nelder-Mead start takes about 150 iterations whatever the sample size.
 
 ## The C library
 
@@ -232,7 +233,7 @@ Every function returns `mlr_status`: `MLR_OK`, `MLR_EINVAL`, `MLR_ENOMEM`, `MLR_
 
 ## Changelog and releases
 
-[CHANGELOG.md](CHANGELOG.md), and [RELEASING.md](RELEASING.md) for how a release is cut. 3.0.0 unified the timing convention and was a breaking release; 3.1.0 was the verification pass that produced most of the numbers above; 3.2.0 replaced the regression solver with QR; 3.3.0 froze the C API for the bindings; 3.3.1 fixed the rolling offset and the regression centering at large levels.
+[CHANGELOG.md](CHANGELOG.md), and [RELEASING.md](RELEASING.md) for how a release is cut. 3.0.0 unified the timing convention and was a breaking release; 3.1.0 was the verification pass that produced most of the numbers above; 3.2.0 replaced the regression solver with QR; 3.3.0 froze the C API for the bindings; 3.3.1 fixed the rolling offset and the regression centering at large levels; 3.4.0 shipped the Python package to PyPI; 3.4.1 was the first release through trusted publishing.
 
 ## License
 

@@ -291,6 +291,46 @@ static int test_garch_fit_no_arch_effect(void) {
     PASS("garch fit with no ARCH effect");
 }
 
+// On a short iid sample the maximum can sit at beta = 0, and a fitter seeded
+// only at high persistence settles at alpha = 0 with beta near 1 instead,
+// 0.2 log-likelihood units short, and reports convergence. The fit must be
+// at least as good as every point of a coarse grid that includes beta = 0.
+static int test_garch_fit_short_iid_beats_low_persistence_grid(void) {
+    enum { N = 100 };
+    static const double alphas[] = {0.0, 0.05, 0.10, 0.20, 0.40};
+    static const double betas[] = {0.0, 0.25, 0.5, 0.75};
+    static double returns[N];
+    for (unsigned long long seed = 1; seed <= 40; seed++) {
+        unsigned long long state = seed;
+        double mean = 0.0;
+        for (size_t t = 0; t < N; t++) {
+            returns[t] = 0.01 * test_lcg_gauss(&state);
+            mean += returns[t];
+        }
+        mean /= N;
+        double var0 = 0.0;
+        for (size_t t = 0; t < N; t++) {
+            returns[t] -= mean;
+            var0 += returns[t] * returns[t];
+        }
+        var0 /= N;
+
+        mlr_garch model;
+        ASSERT(mlr_garch_fit(returns, N, &model) == MLR_OK, "short iid fit OK");
+        double fit_nll = -model.loglik;
+        for (size_t a = 0; a < sizeof alphas / sizeof alphas[0]; a++) {
+            for (size_t b = 0; b < sizeof betas / sizeof betas[0]; b++) {
+                double omega = var0 * (1.0 - alphas[a] - betas[b]);
+                if (omega <= 0.0) continue;  // alpha + beta >= 1 is not a model
+                double grid_nll = test_nll(returns, N, omega, alphas[a], betas[b]);
+                ASSERT(fit_nll <= grid_nll + 1e-9 * (fabs(grid_nll) + 1.0),
+                       "fit is no worse than any low-persistence grid point");
+            }
+        }
+    }
+    PASS("garch fit on short iid samples is not trapped at high persistence");
+}
+
 static int test_garch_fit_invalid_inputs(void) {
     double zeros[100] = {0.0};
     double small[50] = {0.01, -0.01};
@@ -410,6 +450,7 @@ int test_vol(void) {
     failures += test_garch_fit_matches_arch();
     failures += test_garch_fit_scale_invariance();
     failures += test_garch_fit_no_arch_effect();
+    failures += test_garch_fit_short_iid_beats_low_persistence_grid();
     failures += test_garch_fit_invalid_inputs();
     failures += test_garch_filter_no_lookahead();
     failures += test_volatility_timing_alignment();

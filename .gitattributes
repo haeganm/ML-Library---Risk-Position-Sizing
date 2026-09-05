@@ -1,3 +1,4 @@
-# Verification tooling, not part of the library: keep GitHub's language
-# statistics honest about what mlrisk is
+# Verification tooling and the worked example are not the library: keep
+# GitHub's language statistics honest about what walkforward is
 tests/reference/** linguist-detectable=false
+examples/*.ipynb linguist-documentation

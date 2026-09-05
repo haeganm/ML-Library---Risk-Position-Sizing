@@ -86,7 +86,9 @@ def walk_forward_splits(
         Length of each test window, which follows the training window.
     step
         Distance between consecutive splits. Defaults to ``test_size``, giving
-        test windows that tile the sample without overlapping.
+        test windows that tile the sample without overlapping. Only whole test
+        windows are produced, so a tail shorter than ``test_size`` is never
+        tested.
     label_horizon
         Number of periods each label spans. A label at ``i`` built from
         ``[i, i + label_horizon)`` overlaps the test window for the last
@@ -120,11 +122,10 @@ def walk_forward_splits(
     gap = as_count(embargo, "embargo")
 
     if drop >= train:
-        raise ValueError(
-            f"purge ({drop}) must be smaller than train_size ({train}); a label "
-            f"horizon of {horizon} purges {drop} observations and leaves nothing "
-            "to train on"
-        )
+        message = f"purge ({drop}) must be smaller than train_size ({train})"
+        if purge is None:
+            message += f"; a label horizon of {horizon} purges {drop} observations"
+        raise ValueError(message + ", which leaves nothing to train on")
 
     count = ctypes.c_size_t()
     args = (total, train, test, stride, drop, gap, int(bool(include_post_train)))
@@ -176,7 +177,9 @@ class PurgedWalkForward(_BaseCrossValidator):
     step
         Distance between consecutive splits. Defaults to ``test_size``, so the
         test windows tile the sample without overlapping and every observation
-        outside the first training window is tested exactly once.
+        from the end of the first training window to the end of the last whole
+        test window is tested exactly once. A tail shorter than ``test_size``
+        is never tested.
     label_horizon
         Periods each label spans, which sets the purge to
         ``label_horizon - 1``. For a target built as an ``h``-period forward

@@ -2,7 +2,7 @@
 # against no Python or numpy headers, so listing numpy here would make every
 # build environment install it from source wherever no wheel exists.
 [build-system]
-requires = ["scikit-build-core>=0.10"]
+requires = ["scikit-build-core>=0.11"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -10,7 +10,8 @@ name = "walkforward"
 description = "Volatility forecasts, position sizing and purged walk-forward splits that never see the future"
 readme = "python/README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Haegan McGarry" }]
 keywords = [
     "walk-forward", "purged-cross-validation", "backtesting", "lookahead-bias",
@@ -20,11 +21,18 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Financial and Insurance Industry",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: C",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Office/Business :: Financial :: Investment",
     "Topic :: Scientific/Engineering :: Mathematics",
+    "Typing :: Typed",
 ]
 dependencies = ["numpy>=1.23"]
 dynamic = ["version"]
@@ -35,6 +43,8 @@ test = ["pytest>=7", "scikit-learn>=1.1", "pandas>=1.5"]
 
 [project.urls]
 Homepage = "https://github.com/haeganm/walkforward"
+Source = "https://github.com/haeganm/walkforward"
+Issues = "https://github.com/haeganm/walkforward/issues"
 Changelog = "https://github.com/haeganm/walkforward/blob/main/CHANGELOG.md"
 
 # The packaging lives at the repository root so that a source distribution
@@ -42,7 +52,7 @@ Changelog = "https://github.com/haeganm/walkforward/blob/main/CHANGELOG.md"
 # here for src/ and include/, which works the same in a checkout and in an
 # unpacked sdist.
 [tool.scikit-build]
-minimum-version = "0.10"
+minimum-version = "0.11"
 cmake.version = ">=3.21"
 cmake.source-dir = "python"
 build-dir = "build/python/{wheel_tag}"
@@ -50,17 +60,29 @@ wheel.packages = ["python/src/walkforward"]
 # The binding is ctypes and never touches the Python C API, so one wheel per
 # platform serves every Python 3 that can import it
 wheel.py-api = "py3"
+# The sdist carries what the root CMakeLists.txt builds as a top-level
+# project (library, tests, example, bench), so `cmake -S . -B build` works on
+# an unpacked sdist as well as on a checkout. The notebook and its data stay
+# out; they are documentation.
 sdist.include = [
     "src/*.c",
     "include/mlrisk/*.h",
     "include/mlrisk/version.h.in",
     "CMakeLists.txt",
+    "cmake/*",
+    "tests/*.c",
+    "tests/*.h",
+    "examples/vol_target_demo.c",
+    "bench/bench.c",
     "python/CMakeLists.txt",
     "python/README.md",
     "python/tests/*.py",
     "LICENSE",
 ]
-sdist.exclude = [".github", "build", "build-*", "bench", "examples", "tests/reference"]
+sdist.exclude = [
+    ".github", ".gitattributes", ".gitignore", "python/.gitignore",
+    "build", "build-*", "examples/data", "examples/*.ipynb", "examples/*.png", "tests/reference",
+]
 
 # The version comes from the root CMakeLists, the same place the C reads it
 [tool.scikit-build.metadata.version]

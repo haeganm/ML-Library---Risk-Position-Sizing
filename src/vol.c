@@ -187,10 +187,14 @@ mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out) 
     garch_ctx ctx = {returns, n, backcast};
 
     // Coarse feasible grid; omega from variance targeting so every point has
-    // unconditional variance equal to the backcast.
+    // unconditional variance equal to the backcast. Betas below LOW_BETA
+    // form a second group of seeds, used for one extra start (see below).
     static const double alphas[] = {0.02, 0.05, 0.10, 0.15};
-    static const double betas[] = {0.80, 0.88, 0.94};
-    enum { GRID = 12, STARTS = 3, RESTARTS = 3 };
+    static const double betas[] = {0.0, 0.5, 0.80, 0.88, 0.94};
+    enum { GRID = 20, HIGH_STARTS = 3, LOW_STARTS = 1, RESTARTS = 3 };
+    static const double LOW_BETA = 0.8;
+    _Static_assert(GRID == (int)(sizeof alphas / sizeof alphas[0]) * (int)(sizeof betas / sizeof betas[0]),
+                   "GRID must equal the number of seed points");
     double grid_x[GRID][3];
     double grid_f[GRID];
     int g = 0;
@@ -204,22 +208,32 @@ mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out) 
         }
     }
 
-    // Nelder-Mead from the best STARTS grid points, keeping the best result.
-    // The likelihood can have more than one local maximum (a tiny ARCH
-    // effect with high persistence, or a variance regime change, both give
-    // a second basin), and a single start from the best grid point can land
-    // in the wrong one. Each start is re-run from its own result with a
-    // fresh simplex until that stops helping, which is what gets Nelder-Mead
-    // moving again after it stalls against the persistence bound.
+    // Nelder-Mead from the best HIGH_STARTS high-persistence grid points and
+    // the best LOW_STARTS low-persistence one, keeping the best result. The
+    // likelihood can have more than one local maximum (a tiny ARCH effect
+    // with high persistence, or a variance regime change, both give a second
+    // basin), and a single start from the best grid point can land in the
+    // wrong one. The low-persistence start covers short samples with no
+    // ARCH effect, whose maximum can sit at beta = 0: from any seed with
+    // beta >= 0.8 the optimizer settles in the flat near-unit-root basin at
+    // alpha = 0 instead, 0.2 log-likelihood units short, and reports
+    // convergence. The two groups are kept separate because on a series
+    // with a large outlier the low seeds score well on the grid, crowd the
+    // high ones out of a best-three selection, and all lead to a corner
+    // solution at alpha near 1. Each start is re-run from its own result
+    // with a fresh simplex until that stops helping, which is what gets
+    // Nelder-Mead moving again after it stalls against the persistence bound.
     double best[3] = {0.0, 0.0, 0.0};
     double f_min = HUGE_VAL;
     int converged = 0;
-    for (int k = 0; k < STARTS; k++) {
+    for (int k = 0; k < HIGH_STARTS + LOW_STARTS; k++) {
+        const int want_low = k >= HIGH_STARTS;
         int bi = -1;
         for (int i = 0; i < GRID; i++) {
+            if ((grid_x[i][2] < LOW_BETA) != want_low) continue;
             if (grid_f[i] < HUGE_VAL && (bi < 0 || grid_f[i] < grid_f[bi])) bi = i;
         }
-        if (bi < 0) break;
+        if (bi < 0) continue;
         grid_f[bi] = HUGE_VAL;
 
         double x[3] = {grid_x[bi][0], grid_x[bi][1], grid_x[bi][2]};

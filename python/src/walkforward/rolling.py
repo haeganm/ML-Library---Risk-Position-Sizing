@@ -42,7 +42,7 @@ def rolling_mean(x: Any, window: int) -> Any:
 def rolling_std(x: Any, window: int) -> Any:
     """Trailing standard deviation over ``window`` observations, O(n).
 
-    Population convention, dividing by ``window``. Note that pandas
+    Population convention, dividing by ``window``. pandas
     ``rolling().std()`` defaults to the sample convention and divides by
     ``window - 1``, so the two differ by ``sqrt(window / (window - 1))``.
 

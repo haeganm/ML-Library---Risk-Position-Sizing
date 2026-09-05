@@ -1,17 +1,14 @@
 """ctypes binding to the mlrisk C library.
 
-Everything public in this package goes through here. Two rules keep the C
-contracts unbreakable from Python:
+Everything public in this package goes through here. Two rules hold for
+every function in it:
 
 * Output buffers are always allocated on this side and never taken from the
   caller, so the ``restrict`` non-aliasing contract on every C output
   parameter cannot be violated by a numpy view.
 * Inputs are converted to C-contiguous float64 before the pointer is taken,
-  so a strided view, a Python list or a pandas Series is never read as if it
-  were a packed array.
-
-Per-call overhead is a few microseconds against work that is linear in the
-input, so ctypes costs nothing measurable here.
+  so a strided view, a Python list, a masked array or a pandas Series is
+  never read as if it were a packed array of doubles.
 """
 
 from __future__ import annotations
@@ -173,8 +170,8 @@ def _load() -> ctypes.CDLL:
     if not matches:
         raise ImportError(
             f"the walkforward native library is missing from {here}. "
-            "Reinstall the package, or build it in place with "
-            "`pip install -e python/`."
+            "Reinstall the package, or build it from a checkout with "
+            "`pip install .` in the repository root."
         )
     library = ctypes.CDLL(str(matches[0]))
     for name, (argtypes, restype) in _SIGNATURES.items():
@@ -198,10 +195,26 @@ def c_version() -> str:
 
 
 def as_input(values: Any, name: str, *, ndim: int = 1) -> np.ndarray:
-    """Return `values` as a C-contiguous float64 array of the given rank."""
+    """Return ``values`` as a C-contiguous float64 array of the given rank.
+
+    Masked entries become NaN, which every function here treats as missing.
+    The rank and the kind of the data are checked before the conversion,
+    because ``np.ascontiguousarray`` would turn a scalar into a one-element
+    series and a datetime into nanoseconds without a word.
+    """
+    if np.ma.isMaskedArray(values):
+        values = values.filled(np.nan)
+    raw = np.asarray(values)
+    if raw.ndim != ndim:
+        what = "a scalar" if raw.ndim == 0 else f"{raw.ndim} dimensions"
+        raise ValueError(f"{name} must be {ndim}-dimensional, got {what}")
+    if raw.dtype.kind not in "biufO":
+        raise TypeError(
+            f"{name} must be numeric, got dtype {raw.dtype}; convert it to float first"
+        )
+    # Convert from the original object, not from `raw`: a pandas nullable
+    # column turns its NA into NaN only when asked for float64 directly.
     array = np.ascontiguousarray(values, dtype=np.float64)
-    if array.ndim != ndim:
-        raise ValueError(f"{name} must be {ndim}-dimensional, got {array.ndim} dimensions")
     if array.size == 0:
         raise ValueError(f"{name} is empty; every estimator needs at least one observation")
     return array
@@ -225,6 +238,23 @@ def same_length(name_a: str, a: np.ndarray, name_b: str, b: np.ndarray) -> None:
         )
 
 
+def same_index(name_a: str, a: Any, name_b: str, b: Any) -> None:
+    """Refuse two pandas Series whose indexes differ.
+
+    Paired inputs are read positionally. Two Series of the same length on
+    different indexes would be paired by position and the result stamped with
+    the first index, which is exactly how a shifted series ends up sized
+    against the wrong bar. Use ``lag`` to realign instead of slicing.
+    """
+    if _pd is None or not (isinstance(a, _pd.Series) and isinstance(b, _pd.Series)):
+        return
+    if not a.index.equals(b.index):
+        raise ValueError(
+            f"{name_a} and {name_b} are pandas Series on different indexes and "
+            "would be paired by position. Align them first; lag() keeps the index."
+        )
+
+
 def like(values: np.ndarray, template: Any) -> Any:
     """Give a pandas input its index back.
 
@@ -244,7 +274,7 @@ def as_count(value: Any, name: str, *, minimum: int = 0) -> int:
     """
     try:
         count = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise TypeError(f"{name} must be an integer, got {value!r}") from None
     if count != value:
         raise TypeError(f"{name} must be a whole number, got {value!r}")

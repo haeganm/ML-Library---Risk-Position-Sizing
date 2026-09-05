@@ -28,7 +28,7 @@ target_include_directories(walkforward_native PRIVATE
 if(MSVC)
     target_compile_options(walkforward_native PRIVATE /W4 /fp:precise /fp:contract-)
 else()
-    target_compile_options(walkforward_native PRIVATE -Wall -Wextra -ffp-contract=off)
+    target_compile_options(walkforward_native PRIVATE -Wall -Wextra -Wpedantic -ffp-contract=off)
     target_link_libraries(walkforward_native PRIVATE m)
 endif()
 set_target_properties(walkforward_native PROPERTIES
