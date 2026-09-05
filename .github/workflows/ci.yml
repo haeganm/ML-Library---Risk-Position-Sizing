@@ -25,7 +25,7 @@ jobs:
           - { os: windows-latest, cc: "" }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Select compiler
         if: matrix.cc != ''
         run: echo "CC=${{ matrix.cc }}" >> "$GITHUB_ENV"
@@ -46,7 +46,7 @@ jobs:
   build-test-32bit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install 32-bit toolchain
         run: sudo apt-get update && sudo apt-get install -y gcc-multilib
       - name: Configure (-m32, size_t is 32 bits; SSE math, no x87 excess precision)
@@ -61,7 +61,7 @@ jobs:
   sanitize:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure (ASan + UBSan)
         run: >
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -77,7 +77,7 @@ jobs:
   install-consume:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build and install
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMLRISK_BUILD_TESTS=OFF -DMLRISK_BUILD_EXAMPLES=OFF
@@ -121,7 +121,7 @@ jobs:
   reference:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -149,7 +149,7 @@ jobs:
           - { os: windows-latest, python: "3.13" }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
