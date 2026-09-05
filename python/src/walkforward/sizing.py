@@ -63,6 +63,11 @@ def vol_target_position(
     Positions in units. A period whose sigma or price is non-finite,
     non-positive, or extreme enough to make the position unrepresentable gets
     a position of zero rather than a bad number.
+
+    Two pandas Series must share an index. They are read by position, so a
+    sliced ``close[:-1]`` against an unsliced ``sigma`` would be paired one
+    bar off and the result stamped with ``sigma``'s index; use
+    :func:`~walkforward.lag`, which keeps the index.
     """
     same_index("sigma", sigma, "price", price)
     sigma_array = as_input(sigma, "sigma")
@@ -111,6 +116,9 @@ def kelly_fraction(returns: Any, fraction: float = 1.0) -> float:
 
     Raises
     ------
+    ValueError
+        Fewer than two returns, a non-finite return, or a ``fraction`` that
+        is not finite and positive.
     DomainError
         The sample has zero variance, or its variance or the estimate cannot
         be represented.
@@ -125,6 +133,8 @@ def kelly_fraction(returns: Any, fraction: float = 1.0) -> float:
         ),
         "kelly_fraction",
         f"fraction={fraction!r} must be finite and positive, and every return finite",
+        "the sample has zero variance, or its mean, variance or the estimate "
+        "cannot be represented",
     )
     return out.value
 
@@ -151,13 +161,21 @@ def drawdown_scale(equity: Any, max_dd: float) -> Any:
         Cumulative equity path, every value finite and positive.
     max_dd
         Drawdown at which exposure reaches zero, in ``(0, 1]``.
+
+    Raises
+    ------
+    ValueError
+        A non-finite equity value, or ``max_dd`` outside ``(0, 1]``.
+    DomainError
+        An equity value that is zero or negative: there is no drawdown from
+        a peak of nothing.
     """
     array = as_input(equity, "equity")
     out = out_like(array.shape[0])
     check(
         lib.mlr_drawdown_scale(ptr(array), array.shape[0], float(max_dd), ptr(out)),
         "drawdown_scale",
-        f"max_dd={max_dd!r} must be finite and in (0, 1], "
-        "and every equity value finite and positive",
+        f"max_dd={max_dd!r} must be finite and in (0, 1], and every equity value finite",
+        "every equity value must be positive",
     )
     return like(out, equity)

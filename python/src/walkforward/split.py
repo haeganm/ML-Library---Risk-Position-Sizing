@@ -113,6 +113,50 @@ def walk_forward_splits(
     A list of :class:`WalkForwardSplit`, empty when the sample is too short
     for even one split.
     """
+    args, total = _arguments(
+        n, train_size, test_size, step, label_horizon, purge, embargo, include_post_train
+    )
+    if total == 0:
+        return []
+    if total > 1 << 28:
+        raise ValueError(
+            f"n={args[0]}, train_size={args[1]}, test_size={args[2]} and step={args[3]} "
+            f"give {total} splits, which is more than this binding will materialise; "
+            "check the arguments"
+        )
+    count = ctypes.c_size_t()
+    buffer = (Split * total)()
+    check(
+        lib.mlr_walk_forward_splits(*args, buffer, total, ctypes.byref(count)),
+        "walk_forward_splits",
+    )
+    return [
+        WalkForwardSplit(
+            s.train_start,
+            s.train_end,
+            s.test_start,
+            s.test_end,
+            s.train_post_start,
+            s.train_post_end,
+        )
+        for s in buffer[: count.value]
+    ]
+
+
+def _arguments(
+    n: int,
+    train_size: int,
+    test_size: int,
+    step: int | None,
+    label_horizon: int,
+    purge: int | None,
+    embargo: int,
+    include_post_train: bool,
+) -> tuple[tuple[int, ...], int]:
+    """Validate the arguments and ask the C how many splits they give.
+
+    The count is arithmetic on the C side, so this is cheap for any ``n``.
+    """
     total = as_count(n, "n")
     train = as_count(train_size, "train_size", minimum=1)
     test = as_count(test_size, "test_size", minimum=1)
@@ -133,24 +177,7 @@ def walk_forward_splits(
         lib.mlr_walk_forward_splits(*args, None, 0, ctypes.byref(count)),
         "walk_forward_splits",
     )
-    if count.value == 0:
-        return []
-    buffer = (Split * count.value)()
-    check(
-        lib.mlr_walk_forward_splits(*args, buffer, count.value, ctypes.byref(count)),
-        "walk_forward_splits",
-    )
-    return [
-        WalkForwardSplit(
-            s.train_start,
-            s.train_end,
-            s.test_start,
-            s.test_end,
-            s.train_post_start,
-            s.train_post_end,
-        )
-        for s in buffer[: count.value]
-    ]
+    return args, count.value
 
 
 class PurgedWalkForward(_BaseCrossValidator):
@@ -245,7 +272,17 @@ class PurgedWalkForward(_BaseCrossValidator):
     def get_n_splits(self, X: Any = None, y: Any = None, groups: Any = None) -> int:
         """Number of splits this configuration produces for the given sample."""
         del groups
-        return len(self._splits(self._n_samples(X, y)))
+        _, total = _arguments(
+            self._n_samples(X, y),
+            self.train_size,
+            self.test_size,
+            self.step,
+            self.label_horizon,
+            self.purge,
+            0,
+            False,
+        )
+        return total
 
     def __repr__(self) -> str:
         parts = [f"train_size={self.train_size}", f"test_size={self.test_size}"]

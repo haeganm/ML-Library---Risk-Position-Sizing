@@ -31,33 +31,43 @@ mlr_status mlr_walk_forward_splits(
     }
     size_t last_train_start = n - train_len - test_len;
 
+    // The count has a closed form: one split per step from 0 through
+    // last_train_start inclusive. A count query must not loop, because n
+    // is a size_t and nothing stops a caller asking about 1e18 samples.
+    size_t total = last_train_start / step + 1;
+    if (splits_out == NULL) {
+        *count_out = total;
+        return MLR_OK;
+    }
+
     size_t count = 0;
     for (size_t train_start = 0; train_start <= last_train_start; train_start += step) {
-        if (splits_out != NULL && count < capacity) {
-            mlr_split s;
-            s.train_start = train_start;
-            s.test_start = train_start + train_len;
-            s.test_end = s.test_start + test_len;
-            s.train_end = s.test_start - purge;
-
-            // test_end <= n, so n - test_end cannot wrap
-            if (include_post_train && embargo < n - s.test_end) {
-                s.train_post_start = s.test_end + embargo;
-            } else {
-                s.train_post_start = n;
-            }
-            s.train_post_end = n;
-
-            splits_out[count] = s;
+        if (count >= capacity) {
+            break;
         }
+        mlr_split s;
+        s.train_start = train_start;
+        s.test_start = train_start + train_len;
+        s.test_end = s.test_start + test_len;
+        s.train_end = s.test_start - purge;
+
+        // test_end <= n, so n - test_end cannot wrap
+        if (include_post_train && embargo < n - s.test_end) {
+            s.train_post_start = s.test_end + embargo;
+        } else {
+            s.train_post_start = n;
+        }
+        s.train_post_end = n;
+
+        splits_out[count] = s;
         count++;
         if (step > last_train_start - train_start) {
             break;
         }
     }
 
-    *count_out = count;
-    if (splits_out != NULL && count > capacity) {
+    *count_out = total;
+    if (total > capacity) {
         return MLR_EBOUNDS;
     }
     return MLR_OK;

@@ -1,6 +1,6 @@
 prefix=${pcfiledir}/@MLRISK_PC_TO_PREFIX@
-libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
-includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+libdir=@MLRISK_PC_LIBDIR@
+includedir=@MLRISK_PC_INCLUDEDIR@
 
 Name: mlrisk
 Description: C11 volatility forecasting, position sizing, and walk-forward splits

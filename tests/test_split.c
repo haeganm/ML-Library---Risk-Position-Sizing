@@ -106,6 +106,40 @@ static int test_split_count_query_and_capacity(void) {
     PASS("count query and capacity handling");
 }
 
+static int test_split_count_query_is_closed_form(void) {
+    // A count query must not walk every split: n is a size_t and a caller
+    // can ask about more samples than exist. These would take years as a
+    // loop; they must return at once with the arithmetic answer.
+    size_t count = 0;
+    ASSERT(mlr_walk_forward_splits(SIZE_MAX, 1, 1, 1, 0, 0, 0, NULL, 0, &count) == MLR_OK,
+           "count query at SIZE_MAX OK");
+    ASSERT(count == SIZE_MAX - 1, "SIZE_MAX samples, unit windows and step: SIZE_MAX - 1 splits");
+    ASSERT(mlr_walk_forward_splits(SIZE_MAX, 10, 5, 3, 0, 0, 0, NULL, 0, &count) == MLR_OK,
+           "count query with step 3 OK");
+    ASSERT(count == (SIZE_MAX - 15) / 3 + 1, "count is last_train_start / step + 1");
+
+    // And it agrees with the fill pass everywhere the fill pass is affordable
+    unsigned long long state = 99;
+    for (int trial = 0; trial < 500; trial++) {
+        size_t n = 1 + (size_t)(test_lcg_u01(&state) * 60.0);
+        size_t train = 1 + (size_t)(test_lcg_u01(&state) * 12.0);
+        size_t test = 1 + (size_t)(test_lcg_u01(&state) * 6.0);
+        size_t step = 1 + (size_t)(test_lcg_u01(&state) * 5.0);
+        size_t purge = (size_t)(test_lcg_u01(&state) * (double)train);
+        if (purge >= train) purge = train - 1;
+        size_t queried = 0, filled = 0;
+        mlr_split buffer[64];
+        mlr_status a = mlr_walk_forward_splits(n, train, test, step, purge, 0, 0, NULL, 0, &queried);
+        mlr_status b = mlr_walk_forward_splits(n, train, test, step, purge, 0, 0, buffer, 64, &filled);
+        ASSERT(a == MLR_OK && b == MLR_OK, "both calls OK");
+        ASSERT(queried == filled, "count query equals the fill pass count");
+        for (size_t i = 0; i < filled; i++) {
+            ASSERT(buffer[i].train_start == i * step, "fill pass writes every split in order");
+        }
+    }
+    PASS("count query is closed form and agrees with the fill pass");
+}
+
 static int test_split_invalid_inputs(void) {
     mlr_split splits[4];
     size_t count = 123;
@@ -164,6 +198,7 @@ int test_split(void) {
     failures += test_split_plain_walk_forward();
     failures += test_split_invariants();
     failures += test_split_count_query_and_capacity();
+    failures += test_split_count_query_is_closed_form();
     failures += test_split_invalid_inputs();
     failures += test_split_no_wraparound();
     return failures;

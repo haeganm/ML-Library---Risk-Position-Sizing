@@ -129,6 +129,34 @@ def test_object_arrays_with_none_still_read_as_missing():
     np.testing.assert_array_equal(result, [1.0, np.nan, 3.0])
 
 
+def test_sparse_input_is_named_as_such():
+    scipy_sparse = pytest.importorskip("scipy.sparse")
+    with pytest.raises(TypeError, match="sparse"):
+        wf.rolling_mean(scipy_sparse.csr_matrix(np.eye(3)), 1)
+
+
+def test_unreadable_elements_name_the_argument():
+    pd = pytest.importorskip("pandas")
+    with pytest.raises(TypeError, match="returns must be numeric"):
+        wf.ewma_vol(pd.Series([0.1, pd.NA, 0.2], dtype=object))
+    with pytest.raises(TypeError, match="x must be numeric"):
+        wf.lag(np.array([1.0, "two"], dtype=object))
+
+
+def test_domain_errors_say_why_not_what_was_valid():
+    with pytest.raises(wf.DomainError, match="zero variance") as caught:
+        wf.kelly_fraction([0.01, 0.01, 0.01])
+    assert "must be finite" not in str(caught.value)
+    rng = np.random.default_rng(3)
+    X = rng.standard_normal((20, 2))
+    X = np.column_stack([X, X[:, 0] + X[:, 1]])  # dependent column
+    with pytest.raises(wf.DomainError, match="rank deficient") as caught:
+        wf.Ridge().fit(X, rng.standard_normal(20))
+    assert "must be finite" not in str(caught.value)
+    with pytest.raises(wf.DomainError, match="more rows than columns"):
+        wf.Ridge().fit(np.eye(3), np.ones(3))
+
+
 def test_non_integer_counts_are_a_type_error():
     for bad in (float("inf"), float("nan"), 1.5, "3"):
         with pytest.raises(TypeError):
@@ -427,6 +455,51 @@ def test_works_with_sklearn_cross_val_score():
     scores = cross_val_score(LinearRegression(), X, y, cv=cv)
     assert len(scores) == cv.get_n_splits(X)
     assert scores.mean() > 0.9
+
+
+def test_ridge_refuses_reordered_dataframe_columns():
+    pd = pytest.importorskip("pandas")
+    rng = np.random.default_rng(5)
+    frame = pd.DataFrame(rng.standard_normal((50, 3)), columns=["a", "b", "c"])
+    y = frame @ np.array([1.0, 2.0, 3.0])
+    model = wf.Ridge().fit(frame, y)
+    assert model.n_features_in_ == 3
+    assert list(model.feature_names_in_) == ["a", "b", "c"]
+    np.testing.assert_allclose(model.predict(frame), y, atol=1e-10)
+    with pytest.raises(ValueError, match="same columns in the same order"):
+        model.predict(frame[["c", "b", "a"]])
+    # A plain array carries no names and is accepted positionally, as before
+    np.testing.assert_allclose(model.predict(frame.to_numpy()), y, atol=1e-10)
+    # Refitting on an array forgets the names
+    model.fit(frame.to_numpy(), y)
+    assert not hasattr(model, "feature_names_in_")
+
+
+def test_ridge_unfitted_predict_is_a_not_fitted_error():
+    sklearn_exceptions = pytest.importorskip("sklearn.exceptions")
+    with pytest.raises(sklearn_exceptions.NotFittedError):
+        wf.Ridge().predict(np.zeros((2, 2)))
+
+
+def test_ridge_argument_messages():
+    with pytest.raises(TypeError, match="ridge must be a number"):
+        wf.Ridge(ridge="1.0").fit(np.eye(3), np.ones(3))
+    with pytest.raises(ValueError, match="no features"):
+        wf.Ridge().fit(np.zeros((3, 0)), np.ones(3))
+    with pytest.raises(ValueError, match="needs y"):
+        wf.Ridge().fit(np.eye(3), None)
+
+
+def test_huge_split_counts_are_refused_before_allocation():
+    with pytest.raises(ValueError, match="splits"):
+        wf.walk_forward_splits(2**62, train_size=1, test_size=1)
+    # and the count itself is arithmetic, not a loop over 2**62 windows
+
+    class Huge:
+        def __len__(self):
+            return 2**62
+
+    assert wf.PurgedWalkForward(train_size=1, test_size=1).get_n_splits(Huge()) == 2**62 - 1
 
 
 def test_ridge_is_a_usable_sklearn_estimator():

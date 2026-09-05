@@ -40,8 +40,14 @@ reviewer to it if you want a manual approval before anything ships.
 4. The `Release` workflow builds a source distribution and five wheels
    (Linux x86-64 and aarch64, macOS Intel and Apple silicon, Windows x64),
    runs the test suite against each wheel on the platform it was built for,
-   installs the sdist from scratch in a clean directory, and publishes
-   everything to PyPI.
+   and installs the sdist from scratch in a clean directory. A check job
+   then runs `twine check --strict`, requires exactly five wheels named
+   for the source version and each carrying `walkforward_native`, and
+   requires a `## <version>` section in `CHANGELOG.md`. Only then does it
+   publish. A tag pushed with the section still headed `Unreleased` fails
+   at that check, after the wheels are built; delete the tag, add the
+   section, tag again. Publishing skips files PyPI already has, so a
+   re-run after a partial upload finishes the job.
 5. Write the GitHub release notes from the changelog section:
 
    ```bash
@@ -53,7 +59,8 @@ reviewer to it if you want a manual approval before anything ships.
 Run the `Release` workflow by hand from the Actions tab. The publish job only
 runs for a tag, so a manual run builds and tests every wheel and leaves them as
 downloadable artifacts. Do this after any change to the build, the packaging or
-the supported platforms.
+the supported platforms. The changelog check applies to manual runs too: after
+a version bump, the section has to exist before the run goes green.
 
 ## Why the wheels look the way they do
 

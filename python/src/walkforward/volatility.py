@@ -45,7 +45,8 @@ __all__ = [
 GARCH_MIN_SAMPLE = 100
 
 #: Feasibility bound on ``alpha + beta``. A model at or above this is
-#: effectively integrated and its unconditional variance does not exist.
+#: effectively integrated; the bound keeps the unconditional variance,
+#: ``omega / (1 - alpha - beta)``, representable.
 GARCH_MAX_PERSISTENCE = 0.9999
 
 
@@ -162,6 +163,19 @@ class GarchModel:
         :meth:`filter_from`, which continues from the variance state the fit
         ended on; filtering the new data alone restarts from the pre-sample
         seed and is wrong for the first few dozen periods.
+
+        A non-finite return does not change the forecast already made for
+        its period; the recursion substitutes the current variance for the
+        missing squared return and carries on, so later forecasts stay
+        finite.
+
+        Raises
+        ------
+        ValueError
+            The model's parameters are not a feasible GARCH(1,1).
+        DomainError
+            The recursion overflowed. The output up to that point is not
+            returned.
         """
         array = as_input(returns, "returns")
         out = out_like(array.shape[0])
@@ -170,6 +184,7 @@ class GarchModel:
             lib.mlr_garch_filter(ctypes.byref(model), ptr(array), array.shape[0], ptr(out)),
             "GarchModel.filter",
             self._invalid(),
+            "the variance recursion overflowed; the returns or the parameters are extreme",
         )
         return like(out, returns)
 
@@ -189,6 +204,8 @@ class GarchModel:
         sigma2_first
             Conditional variance of the first period. Defaults to
             :attr:`sigma2_next`, which is the state at the end of the fit.
+
+        Missing data and errors are handled as in :meth:`filter`.
         """
         seed = self.sigma2_next if sigma2_first is None else float(sigma2_first)
         if not (seed > 0.0) or not math.isfinite(seed):
@@ -205,6 +222,7 @@ class GarchModel:
             ),
             "GarchModel.filter_from",
             self._invalid(),
+            "the variance recursion overflowed; the returns or the parameters are extreme",
         )
         return like(out, returns)
 
@@ -257,6 +275,13 @@ def garch_fit(returns: Any) -> GarchModel:
     ``converged`` reports that the optimizer met its tolerances, not that the
     model is identified. On a few hundred observations a GARCH fit converges
     happily to a near-unit-root model that means very little.
+
+    The estimate is the maximum of the likelihood, whatever it looks like.
+    One extreme tick can make that an ARCH-like corner, alpha near 1 and
+    beta near 0, whose forecast is essentially ``|r[t-1]|``; the fitter
+    reports it with ``converged`` set because it is the answer to the
+    question asked. Winsorise or drop the tick first if that is not the
+    model you want.
     """
     array = as_input(returns, "returns")
     if array.shape[0] < GARCH_MIN_SAMPLE:
@@ -268,7 +293,8 @@ def garch_fit(returns: Any) -> GarchModel:
     check(
         lib.mlr_garch_fit(ptr(array), array.shape[0], ctypes.byref(model)),
         "garch_fit",
-        "every return must be finite and the sample must have representable variance",
+        "every return must be finite",
+        "the sample's variance is zero, denormal or too large to represent",
     )
     return GarchModel(
         omega=model.omega,
@@ -291,6 +317,9 @@ def parkinson_vol(high: Any, low: Any) -> Any:
     low, or a ratio that overflows) give ``NaN`` rather than failing the call.
     Range estimators are biased slightly low on discretely sampled bars, since
     the observed extremes understate the continuous ones.
+
+    pandas Series arguments must share an index; the bars are read by
+    position and the result carries the first argument's index.
     """
     same_index("high", high, "low", low)
     h = as_input(high, "high")
@@ -314,6 +343,9 @@ def garman_klass_vol(open: Any, high: Any, low: Any, close: Any) -> Any:  # noqa
     Bars whose open or close falls outside ``[low, high]`` are inconsistent
     and give ``NaN``, as do non-finite and non-positive prices. On a
     consistent bar the estimator cannot go negative.
+
+    pandas Series arguments must share an index; the bars are read by
+    position and the result carries the first argument's index.
     """
     for name, series in (("high", high), ("low", low), ("close", close)):
         same_index("open", open, name, series)

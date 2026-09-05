@@ -73,6 +73,8 @@ static int test_fuzz_sweep(void) {
             ASSERT(mlr_garch_filter(&m, b, n, out) == MLR_OK, "fitted model filters");
             for (size_t i = 0; i < n; i++) ASSERT(mlr_isfinite(out[i]) && out[i] > 0.0, "filter output finite and positive");
             ASSERT(mlr_garch_forecast(&m, 1 + (size_t)(test_lcg_u01(&st) * 50), out) == MLR_OK, "fitted model forecasts");
+            ASSERT(mlr_garch_filter_from(&m, m.sigma2_next, b, n, out) == MLR_OK, "fitted model continues");
+            for (size_t i = 0; i < n; i++) ASSERT(mlr_isfinite(out[i]) && out[i] > 0.0, "continuation output finite and positive");
         }
         mlr_garch hand = {.omega = s1, .alpha = s2, .beta = s3, .sigma2_next = random_value(&st), .backcast = random_value(&st)};
         s = mlr_garch_filter(&hand, a, n, out);
@@ -150,7 +152,11 @@ static int test_fuzz_sweep(void) {
         if (rows > 0) {
             mlr_lin_model lm;
             ASSERT(mlr_lin_model_init(&lm, dim) == MLR_OK, "lin_model_init");
-            s = mlr_linreg_fit(a, b, rows, dim, s1, &lm);
+            ASSERT(mlr_linreg_predict(c, rows, dim, &lm, out) == MLR_EINVAL, "predict on an unfitted model is refused");
+            // Plain least squares (ridge 0) on some clean rounds, so the
+            // un-penalised solve and its rank test are reached with data
+            double ridge = (clean && test_lcg_u01(&st) < 0.3) ? 0.0 : s1;
+            s = mlr_linreg_fit(a, b, rows, dim, ridge, &lm);
             int ok = known_status(s);
             int outputs_finite = 1;
             if (s == MLR_OK) {
@@ -166,6 +172,8 @@ static int test_fuzz_sweep(void) {
             ASSERT(outputs_finite, "fitted model has finite weights, predicts, and is marked fitted");
         }
     }
+
+    ASSERT(mlr_version() != NULL && mlr_version_number() > 0, "version strings are available");
 
     // The sweep is only worth something if the success paths were reached
     ASSERT(fits_ok > 100, "garch_fit succeeded on clean rounds");

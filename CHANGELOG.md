@@ -10,14 +10,19 @@
   0.2 log-likelihood units short of the maximum at beta = 0, and reported
   convergence. The grid now includes beta = 0 and 0.5 and one extra start
   is taken from its best low-persistence point, kept separate from the
-  three high-persistence starts because on a series with a large outlier
-  the low seeds score well on the grid and would otherwise crowd out the
-  starts that find the right answer. Fit time is up by a third (621 ms for
-  100,000 returns). Verified by the new
-  `tests/reference/garch_multistart_check.py`, 108 starts against the fit
-  on thirteen awkward series, and by a C test over 40 short iid samples.
-  Well-behaved samples fit to the same parameters as before to seven
-  decimals.
+  three high-persistence starts so that those always run: on a series
+  with a large outlier the low seeds score best on the grid and a
+  best-three selection would take only them. Fit time is up by a fifth
+  (621 ms for 100,000 returns, from 506) and the evaluation count by a
+  third. Verified by the new `tests/reference/garch_multistart_check.py`,
+  78 starts against the fit on thirteen awkward series, and by a C test
+  over 40 short iid samples. No sample fits worse than before. On 400
+  seeded Monte Carlo samples 399 move by under 2e-7 and one, at n = 500,
+  improves by 0.29 log-likelihood units with beta moving from 0.73 to 0;
+  on series with one extreme tick the fit now reaches the ARCH-like
+  corner (alpha near 1, beta near 0) that is the true maximum roughly
+  twice as often as before, with `converged` set. The header and the
+  docstring say so.
 - The Python binding read a masked array through its fill values: the mask
   was dropped by the float64 conversion, so a masked observation was a real
   number to the C. Masked entries are now NaN, which every function treats
@@ -45,6 +50,39 @@
   now asserts the numbers the README quotes, so a change in the library
   that moves them fails the build.
 
+- `mlr_rolling_std` rebuilt its accumulators only when the variance fell
+  by a factor of a million or more as a sample left the window. A spike
+  whose exit cut it by a factor of 995,000 slipped past, and the
+  cancellation error it left compounded until the next periodic rebuild:
+  7.9e-8 relative against exact arithmetic, where the header promises no
+  degradation after an outlier has left. The guard is now a factor of
+  four, which makes the worst case 2e-15 and costs nothing measurable,
+  since a drop that large from one sample is rare.
+- `mlr_walk_forward_splits` counted splits by walking them, so a count
+  query on a huge `n` ran for hours; from Python, with the GIL released,
+  Ctrl-C did nothing. The count is arithmetic now. The binding also
+  refuses to materialise more than 2^28 splits, and `get_n_splits` no
+  longer builds the list to measure it.
+- `Ridge` fitted on a DataFrame predicted silently wrong numbers when the
+  same frame came back with its columns in another order. It records
+  `n_features_in_` and, for string columns, `feature_names_in_`, and
+  `predict` requires the same columns in the same order. `predict` before
+  `fit` raises scikit-learn's `NotFittedError` (a `ValueError` subclass
+  still), and fewer rows than columns at ridge 0 raises `DomainError` as
+  the docstring said.
+- `DomainError` messages listed the preconditions the caller had already
+  met (a rank-deficient design said "ridge must be finite"). They now say
+  why the computation had no answer.
+- Sparse input, an object column holding `pd.NA`, a string `ridge`, an X
+  with no columns and `fit(X, None)` each produced an error about
+  something else. Each names the actual problem.
+- The pkg-config file put an absolute `CMAKE_INSTALL_INCLUDEDIR` or
+  `LIBDIR` under `${prefix}`, which GNUInstallDirs allows and which broke
+  `pkg-config --cflags`. Absolute directories are written in full.
+- The fuzz sweep never reached the un-penalised least-squares solve, never
+  continued a fitted GARCH with `filter_from`, never called `predict` on
+  an unfitted model and never called `mlr_version`. It does now.
+
 ### Added
 
 - `examples/spy_walk_forward.ipynb`: one model end to end on 25 years of
@@ -58,13 +96,24 @@
 - `py.typed`, so type checkers use the package's annotations. Metadata 2.4
   with a license expression, Python version classifiers, source and issue
   URLs.
-- The release workflow's check job now requires five wheels at the tagged
+- The release workflow's check job now requires five wheels at the source
   version, each carrying the shared library, and a changelog section for
-  the version; publishing tolerates a re-run after a partial upload.
-  Dependabot watches the actions.
+  that version; publishing tolerates a re-run after a partial upload.
+  Dependabot watches the actions. The CI workflow's push filter briefly
+  listed only `tags-ignore`, which GitHub reads as "no branches", so one
+  commit ran no CI; it names `branches: ["**"]` now.
 
 ### Changed
 
+- The README's Monte Carlo row at n = 500 moved with the fitter change and
+  was re-measured; the arch head-to-head is quoted to six decimals, since
+  the seventh depends on the build; "108 starts" was 78; the control row
+  in the SPY example ends the training window four bars earlier rather
+  than shifting it, and is now described that way. `GarchModel.filter`
+  and `filter_from` document their missing-data rule and the
+  `DomainError` they can raise; `kelly_fraction` and `drawdown_scale`
+  document their `ValueError` arm; the paired-Series index rule is in the
+  three docstrings it applies to and in both READMEs.
 - The README's precision figures for the rolling statistics were stale
   (1.7e-15 and 6e-16 where the reference suite measures 4.4e-16 and
   4.1e-15), the 3.4.0 entry claimed a glibc 2.17 floor the wheels do not

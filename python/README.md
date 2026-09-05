@@ -71,7 +71,7 @@ Volatility is per period. Annualised converts as `annual / sqrt(periods_per_year
 
 `rolling_std` uses the population convention and divides by `window`. Pandas `rolling().std()` defaults to the sample convention, so the two differ by `sqrt(window / (window - 1))`.
 
-A pandas Series in gives a pandas Series out, on the same index. Realigning a bare array by hand is one of the ways lookahead gets in.
+A pandas Series in gives a pandas Series out, on the same index. Realigning a bare array by hand is one of the ways lookahead gets in, so two Series passed together must share an index; `lag` is the way to shift one.
 
 Bad arguments raise. Bad elements are handled per function and documented on each: a non-finite return is skipped by the recursions, makes a rolling window NaN, and gives a zero position in sizing. `DomainError` (a `ValueError`) means the arguments were fine but the computation has no answer: a singular design, a sample with no variance, an overflowing recursion.
 
@@ -84,7 +84,7 @@ The C library underneath is compared on every push to independent implementation
 | Rolling mean and std, with gaps | pandas | 3.1e-11 |
 | Rolling std at a price level of 1e9 | exact rational arithmetic | 4.4e-16, where a two-pass computation is off by 4.9e-12 |
 | EWMA, predictive alignment | pandas `ewm` shifted one period | 3.5e-18 |
-| GARCH filter and forecast | `arch` | 4.4e-16 relative |
+| GARCH filter and forecast | `arch` | 4.4e-16 and 8.9e-16 relative |
 | GARCH fit over 20 samples | `arch`, same likelihood | 5.0e-7 max parameter difference |
 | Ridge, condition number 1e4 to 1e10 | SVD least squares | within 2x condition times epsilon |
 | Ridge with a feature at level 1e6 to 1e15 | exact rational OLS | under 1e-14 |

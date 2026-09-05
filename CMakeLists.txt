@@ -102,10 +102,22 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/mlrisk)
 
 # The .pc file locates the prefix relative to its own directory, whatever
-# the depth of CMAKE_INSTALL_LIBDIR (lib, lib64, lib/x86_64-linux-gnu, ...)
+# the depth of CMAKE_INSTALL_LIBDIR (lib, lib64, lib/x86_64-linux-gnu, ...).
+# GNUInstallDirs also allows absolute LIBDIR and INCLUDEDIR; those are
+# written out in full, since nothing relative to the prefix describes them.
 file(RELATIVE_PATH MLRISK_PC_TO_PREFIX
-     "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
+     "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
 string(REGEX REPLACE "/$" "" MLRISK_PC_TO_PREFIX "${MLRISK_PC_TO_PREFIX}")
+if(IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")
+    set(MLRISK_PC_LIBDIR "${CMAKE_INSTALL_FULL_LIBDIR}")
+else()
+    set(MLRISK_PC_LIBDIR "\${prefix}/${CMAKE_INSTALL_LIBDIR}")
+endif()
+if(IS_ABSOLUTE "${CMAKE_INSTALL_INCLUDEDIR}")
+    set(MLRISK_PC_INCLUDEDIR "${CMAKE_INSTALL_FULL_INCLUDEDIR}")
+else()
+    set(MLRISK_PC_INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
+endif()
 configure_file(cmake/mlrisk.pc.in ${CMAKE_CURRENT_BINARY_DIR}/mlrisk.pc @ONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mlrisk.pc
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)

@@ -217,12 +217,17 @@ mlr_status mlr_garch_fit(const double *returns, size_t n, mlr_garch *model_out) 
     // ARCH effect, whose maximum can sit at beta = 0: from any seed with
     // beta >= 0.8 the optimizer settles in the flat near-unit-root basin at
     // alpha = 0 instead, 0.2 log-likelihood units short, and reports
-    // convergence. The two groups are kept separate because on a series
-    // with a large outlier the low seeds score well on the grid, crowd the
-    // high ones out of a best-three selection, and all lead to a corner
-    // solution at alpha near 1. Each start is re-run from its own result
-    // with a fresh simplex until that stops helping, which is what gets
-    // Nelder-Mead moving again after it stalls against the persistence bound.
+    // convergence. The two groups are kept separate so that the
+    // high-persistence starts always run: on a series with a large outlier
+    // the low seeds score best on the grid and a best-three selection
+    // would take only them, losing the high-persistence optimum on the
+    // series where that one is better. Where the corner solution (alpha
+    // near 1, beta near 0) genuinely has the higher likelihood, as it does
+    // when one tick dominates the sample, it wins and is reported; that is
+    // the maximum-likelihood estimate and the header says so. Each start is
+    // re-run from its own result with a fresh simplex until that stops
+    // helping, which is what gets Nelder-Mead moving again after it stalls
+    // against the persistence bound.
     double best[3] = {0.0, 0.0, 0.0};
     double f_min = HUGE_VAL;
     int converged = 0;

@@ -151,10 +151,15 @@ mlr_status mlr_rolling_std(const double *x, size_t n, size_t window, double *MLR
             m2 -= (x_old - mean) * (x_old - mean_removed);
             mean = mean_removed;
 
-            // If the sample that left carried almost all of the variance
-            // (an outlier leaving the window) the subtraction above has
-            // cancelled catastrophically; rebuild instead of trusting it
-            if (m2 < 1e-6 * m2_before) {
+            // If the sample that left carried most of the variance (an
+            // outlier leaving the window) the subtraction above has
+            // cancelled; rebuild instead of trusting it. The threshold is
+            // deliberately loose: a spike that took the variance down by a
+            // factor of 1e6 rather than 1e7 used to slip past a 1e-6 cliff
+            // and leave eight lost digits until the next periodic rebuild.
+            // A drop this large from one sample is rare, so the amortized
+            // cost is unchanged.
+            if (m2 < 0.25 * m2_before) {
                 rebuild = 1;
             } else {
                 double mean_added = mean + (x_new - mean) / w;

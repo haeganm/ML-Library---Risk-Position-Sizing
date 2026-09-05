@@ -190,6 +190,31 @@ static int test_rolling_outliers_and_trend(void) {
     PASS("outliers leaving the window and long trends");
 }
 
+static int test_rolling_std_spike_just_missing_the_rebuild_guard(void) {
+    // A spike that takes most of the variance with it when it leaves, but
+    // not enough to trip a near-total-collapse guard, leaves cancellation
+    // error that compounds until the next periodic rebuild. Spike sizes are
+    // chosen so the variance drops by 1e-2 to 1e-6 on exit, the range a
+    // guard at 1e-6 let through.
+    enum { N = 400, W = 20 };
+    static double x[N], std_out[N];
+    unsigned long long state = 31415;
+    double spikes[] = {30.0, 300.0, 900.0};
+    for (size_t k = 0; k < 3; k++) {
+        for (size_t i = 0; i < N; i++) x[i] = 100.0 + (test_lcg_u01(&state) - 0.5);
+        x[60] += spikes[k];
+        x[61] -= spikes[k] * 0.3;  // a second, smaller collapse two steps later
+        ASSERT(mlr_rolling_std(x, N, W, std_out) == MLR_OK, "std with a spike OK");
+        for (size_t i = W - 1; i < N; i++) {
+            if (i - W + 1 <= 61 && i >= 60) continue;  // window still holds a spike
+            double mean, sd;
+            naive_stats(x, i - W + 1, i, &mean, &sd);
+            ASSERT_NEAR(std_out[i] / sd, 1.0, 1e-13, "std after a spike that just missed the guard");
+        }
+    }
+    PASS("spike leaving the window below the old rebuild threshold");
+}
+
 static int test_rolling_overflow_windows(void) {
     // Finite inputs whose differences overflow: the window is NaN, never
     // Inf, never a silent zero std, and the state recovers afterwards
@@ -349,6 +374,7 @@ int test_rolling(void) {
     failures += test_rolling_shift_invariance();
     failures += test_rolling_nan_recovery();
     failures += test_rolling_outliers_and_trend();
+    failures += test_rolling_std_spike_just_missing_the_rebuild_guard();
     failures += test_rolling_overflow_windows();
     failures += test_ewma_vol_known_answer();
     failures += test_ewma_vol_invalid_inputs();

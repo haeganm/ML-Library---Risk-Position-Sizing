@@ -57,17 +57,25 @@ _MESSAGES = {
 }
 
 
-def check(status: int, what: str, detail: str = "") -> None:
-    """Turn an ``mlr_status`` into the matching Python exception."""
+def check(status: int, what: str, detail: str = "", domain: str = "") -> None:
+    """Turn an ``mlr_status`` into the matching Python exception.
+
+    ``detail`` describes the preconditions an invalid argument violated;
+    ``domain`` describes why a well-formed computation had no answer. They
+    are different sentences, and a domain error must not repeat the
+    preconditions, which by then the caller has met.
+    """
     if status == _OK:
         return
     message = f"{what}: {_MESSAGES.get(status, f'unknown status {status}')}"
+    if status == _EDOMAIN:
+        if domain:
+            message = f"{message} ({domain})"
+        raise DomainError(message)
     if detail:
         message = f"{message} ({detail})"
     if status == _ENOMEM:
         raise MemoryError(message)
-    if status == _EDOMAIN:
-        raise DomainError(message)
     if status == _EINVAL:
         raise ValueError(message)
     raise RuntimeError(message)  # EBOUNDS never escapes: we size every buffer
@@ -204,6 +212,10 @@ def as_input(values: Any, name: str, *, ndim: int = 1) -> np.ndarray:
     """
     if np.ma.isMaskedArray(values):
         values = values.filled(np.nan)
+    if hasattr(values, "toarray") and not isinstance(values, np.ndarray):
+        raise TypeError(
+            f"{name} must be a dense array; sparse input is not supported, call .toarray() first"
+        )
     raw = np.asarray(values)
     if raw.ndim != ndim:
         what = "a scalar" if raw.ndim == 0 else f"{raw.ndim} dimensions"
@@ -214,7 +226,14 @@ def as_input(values: Any, name: str, *, ndim: int = 1) -> np.ndarray:
         )
     # Convert from the original object, not from `raw`: a pandas nullable
     # column turns its NA into NaN only when asked for float64 directly.
-    array = np.ascontiguousarray(values, dtype=np.float64)
+    try:
+        array = np.ascontiguousarray(values, dtype=np.float64)
+    except (TypeError, ValueError) as error:
+        raise TypeError(
+            f"{name} must be numeric; an element could not be read as a float ({error})"
+        ) from None
+    if ndim == 2 and array.shape[1] == 0:
+        raise ValueError(f"{name} has no features (shape {array.shape})")
     if array.size == 0:
         raise ValueError(f"{name} is empty; every estimator needs at least one observation")
     return array

@@ -52,7 +52,7 @@ position = wf.vol_target_position(
 pnl = position * entry * returns[1000:]
 ```
 
-`model.persistence`, `model.half_life` and `model.unconditional_vol` are there so you do not have to recompute them. A pandas Series in gives a pandas Series out, on the same index, because realigning a bare array by hand is one of the ways lookahead gets in.
+`model.persistence`, `model.half_life` and `model.unconditional_vol` are there so you do not have to recompute them. A pandas Series in gives a pandas Series out, on the same index, because realigning a bare array by hand is one of the ways lookahead gets in. Two Series passed together must share an index, for the same reason: they are read by position, and `lag` is the way to shift one.
 
 ## Cross-validation
 
@@ -92,7 +92,7 @@ Then the same model is run with one line changed each time, plus a control:
 |---|---|
 | None | 0.18 |
 | Purge nothing, as if the labels were one day long | 0.27 |
-| Control: shift every training window back four bars, leaking nothing | 0.10 |
+| Control: end every training window four bars earlier, leaking nothing | 0.10 |
 | Drop every `lag`, so a feature for bar t includes bar t | 14.6 |
 
 Skipping the purge moves the Sharpe by 0.08, and the control moves it by 0.08 the other way while changing the same number of training rows, so on this run the purge's effect is inside the noise of a single Sharpe. The leak it removes is real by construction and grows with the label horizon; it is small at five days against 1260 training rows. The last change is the one that matters. It produces a Sharpe of 14 from a model with no edge, and nothing in the code that produced it looks wrong. That is what the timing convention and `lag` exist to prevent.
@@ -101,9 +101,9 @@ Skipping the purge moves the Sharpe by 0.08, and the control moves it by 0.08 th
 
 **The forecast at t cannot see t.** `ewma_vol` emits the forecast before it absorbs `returns[t]`; the GARCH filter seeds from the model's stored backcast rather than from the series it is filtering, which is where the 2.x filter leaked. Both are tested for prefix stability (filtering the first half of a series gives the first half of the full filter, exactly) and for shock timing (a spike at bar k moves the output at k+1 and nothing before it). The reference suite goes further: for 40 random series it rewrites everything after a random `t` and asserts every output through `t` is bit-identical.
 
-**The fitter is checked against something it did not write.** `arch` 7.2.0 fits the same simulated sample with the same backcast, so both sides maximize the same function. On the first reference sample walkforward reaches alpha 0.0810352, beta 0.8835013 and log-likelihood 9259.9490822; `arch` reaches 0.0810352, 0.8835015 and 9259.9490821. Across 20 fresh samples the largest parameter difference is 5e-7. `arch` needs the returns multiplied by 100 to converge on these samples; walkforward fits them raw, because its Nelder-Mead stops on simplex diameter as well as function value and its feasibility bound on omega is positivity rather than an absolute floor.
+**The fitter is checked against something it did not write.** `arch` 7.2.0 fits the same simulated sample with the same backcast, so both sides maximize the same function. On the first reference sample walkforward reaches alpha 0.081035, beta 0.883501 and log-likelihood 9259.94908; `arch` reaches 0.081035, 0.883502 and 9259.94908. Across 20 fresh samples the largest parameter difference is 5e-7. `arch` needs the returns multiplied by 100 to converge on these samples; walkforward fits them raw, because its Nelder-Mead stops on simplex diameter as well as function value and its feasibility bound on omega is positivity rather than an absolute floor.
 
-**The fitter is checked against brute force.** `tests/reference/garch_multistart_check.py` runs 108 Nelder-Mead starts on the identical likelihood over thirteen series built to be awkward: near-IGARCH, no ARCH effect, t(3) innovations, a 50-sigma outlier and a fourfold variance regime switch, each at n = 1500 and n = 100, plus SPY. A single start from the best grid point lost on three of them, by up to 1.7 log-likelihood units, which is why the fitter now runs several starts and restarts each until that stops helping. The last miss the script found was a 100-observation series with no ARCH effect, whose maximum sits at beta = 0: from any high-persistence seed the optimizer settled at alpha = 0 with beta near 1, 0.2 log-likelihood units short, and reported convergence. The grid now carries low-persistence seeds and one start is taken from them. The fit is within 3e-11 log-likelihood units of the brute-force optimum on all thirteen series.
+**The fitter is checked against brute force.** `tests/reference/garch_multistart_check.py` runs 78 Nelder-Mead starts on the identical likelihood over thirteen series built to be awkward: near-IGARCH, no ARCH effect, t(3) innovations, a 50-sigma outlier and a fourfold variance regime switch, each at n = 1500 and n = 100, plus SPY. A single start from the best grid point lost on three of them, by up to 1.7 log-likelihood units, which is why the fitter now runs several starts and restarts each until that stops helping. The last miss the script found was a 100-observation series with no ARCH effect, whose maximum sits at beta = 0: from any high-persistence seed the optimizer settled at alpha = 0 with beta near 1, 0.2 log-likelihood units short, and reported convergence. The grid now carries low-persistence seeds and one start is taken from them. The fit is within 3e-11 log-likelihood units of the brute-force optimum on all thirteen series. One consequence is worth knowing: on a series with one extreme tick the maximum of the likelihood is often an ARCH-like corner, alpha near 1 and beta near 0, and the fitter now finds and reports it, with `converged` set, where before it could stop at a worse local maximum. That is the estimate the model defines; winsorise the tick if it is not the one you want.
 
 **The fit, the likelihood and the filter share one recursion step.** `omega + alpha*r*r + beta*s2` and `omega + alpha*(r*r) + beta*s2` differ by an ulp on about a third of steps, and when the fit computed `sigma2_next` one way and the filter stepped the other, the documented bit-exact continuation failed for 12% of fit samples by one ulp that then propagated. One step function now serves all three, checked on 60 seeds in the C suite and 60 more in the reference suite.
 
@@ -117,7 +117,7 @@ Skipping the purge moves the Sharpe by 0.08, and the control moves it by 0.08 th
 
 ## Conventions
 
-Volatility is **per period** everywhere. Annualized converts as `annual / sqrt(periods_per_year)`, so a 10% annual target on daily data is `0.10 / sqrt(252)`, about 0.0063.
+Volatility is **per period** everywhere. Annualised converts as `annual / sqrt(periods_per_year)`, so a 10% annual target on daily data is `0.10 / sqrt(252)`, about 0.0063.
 
 `rolling_std` uses population variance and divides by `window`; pandas `rolling().std()` defaults to the sample convention, so the two differ by `sqrt(window / (window - 1))`. `kelly_fraction` uses sample variance and the raw mean, not the excess over a funding rate. `garch_fit` is Gaussian MLE on mean-zero returns, so demean with the training-window mean before fitting and filtering. Alpha and beta are scale invariant; omega scales with the variance of the returns.
 
@@ -127,7 +127,7 @@ Non-finite elements follow one of five policies, each stated on the function:
 |---|---|
 | Reject the whole call | `garch_fit`, `kelly_fraction`, `drawdown_scale`, `Ridge.fit` |
 | NaN at that index, call succeeds | `rolling_mean`, `rolling_std`, `parkinson_vol`, `garman_klass_vol` |
-| Skip the element, carry the state | `ewma_vol`, `GarchModel.filter`, `GarchModel.filter_from` |
+| Skip the element, carry the recursion | `ewma_vol` (state unchanged), `GarchModel.filter`, `GarchModel.filter_from` (the current variance stands in for the missing squared return) |
 | Zero position at that index | `vol_target_position` |
 | Not checked, propagates | `Ridge.predict` |
 
@@ -164,7 +164,7 @@ GARCH(1,1) parameter recovery, 200 simulated series per row, truth alpha 0.10, b
 
 | n | alpha bias | alpha rmse | beta bias | beta rmse | persistence rmse | converged |
 |---|---|---|---|---|---|---|
-| 500 | +0.0033 | 0.035 | -0.036 | 0.100 | 0.084 | 200/200 |
+| 500 | +0.0035 | 0.035 | -0.040 | 0.116 | 0.102 | 200/200 |
 | 2000 | +0.0012 | 0.017 | -0.007 | 0.028 | 0.018 | 200/200 |
 
 The beta bias at n = 500 is the estimator, not the code, and `arch` lands on the same values. It is why the fitter refuses fewer than 100 observations and why short fits deserve distrust even when it does not refuse.

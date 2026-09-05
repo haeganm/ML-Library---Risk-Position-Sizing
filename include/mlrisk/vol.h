@@ -55,11 +55,19 @@ typedef struct {
 /**
  * @brief Fit GARCH(1,1) by Gaussian maximum likelihood
  *
- * A coarse feasible grid seeds Nelder-Mead from its three best points, each
+ * A coarse feasible grid seeds Nelder-Mead from its three best
+ * high-persistence points and its best low-persistence point, each
  * restarted from its own result until that stops improving, and the best
  * result is kept; the likelihood can have more than one local maximum.
  * Non-convergence is not an error: the best point found is returned with
  * converged == 0.
+ *
+ * The estimate is the maximum of the Gaussian likelihood, whatever that
+ * maximum looks like. One extreme tick can make it an ARCH-like corner,
+ * alpha near 1 and beta near 0, whose forecast is essentially |r[t-1]|;
+ * the fitter reports that model with converged == 1 because it is the
+ * answer to the question asked. Winsorise or drop the tick first if that
+ * is not the model you want.
  * alpha and beta are invariant to the scale of the returns; omega scales
  * with their variance.
  *

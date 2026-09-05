@@ -1,7 +1,7 @@
 """Does garch_fit reach the global maximum of its own likelihood?
 
-Brute force on the identical objective: for each series, 108 Nelder-Mead
-starts (scipy) on the Gaussian GARCH(1,1) negative log-likelihood evaluated
+Brute force on the identical objective: for each series, 78 Nelder-Mead
+starts (scipy; a 6 x 6 x 3 grid less the 10 pairs at or over the persistence bound) on the Gaussian GARCH(1,1) negative log-likelihood evaluated
 through the public filter with the fit's own backcast, against the single
 call to garch_fit. The series are built to be awkward: near-IGARCH, no ARCH
 effect, t(3) innovations, a 50-sigma outlier, a fourfold variance regime
