@@ -60,7 +60,7 @@ jobs:
           cd "$(mktemp -d)"
           python -m pip install "$GITHUB_WORKSPACE"/dist/*.tar.gz
           python -c "import walkforward as wf; print(wf.__version__, wf.c_version())"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-sdist
           path: dist/*.tar.gz
@@ -82,7 +82,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build and test the wheel
         uses: pypa/cibuildwheel@v2.21.3
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.label }}
           path: wheelhouse/*.whl
