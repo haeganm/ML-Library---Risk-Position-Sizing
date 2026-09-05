@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.4.1 (2026-09-05)
+
+No code change. This release exists to publish through trusted publishing
+for the first time; 3.4.0 went out with an API token that has since been
+revoked. The release workflow, `RELEASING.md` and the 3.4.0 entry below now
+describe what actually happened.
+
 ## 3.4.0 (2026-09-04)
 
 First release published to PyPI as `walkforward`. The C library is unchanged

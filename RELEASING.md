@@ -33,8 +33,8 @@ reviewer to it if you want a manual approval before anything ships.
 3. Tag and push it:
 
    ```bash
-   git tag v3.4.0
-   git push origin v3.4.0
+   git tag v3.4.1
+   git push origin v3.4.1
    ```
 
 4. The `Release` workflow builds a source distribution and five wheels
@@ -45,7 +45,7 @@ reviewer to it if you want a manual approval before anything ships.
 5. Write the GitHub release notes from the changelog section:
 
    ```bash
-   gh release create v3.4.0 --title "walkforward 3.4.0" --notes-file notes.md --latest
+   gh release create v3.4.1 --title "walkforward 3.4.1" --notes-file notes.md --latest
    ```
 
 ## Checking the build without publishing
