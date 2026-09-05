@@ -61,6 +61,10 @@ Without the purge, the twenty training rows before each test window carry labels
 
 There is no `embargo` argument, on purpose. An embargo protects training data that sits after a test window, and a walk-forward never trains on anything after the window it is testing. `walk_forward_splits(..., include_post_train=True)` exposes that variant with the warning it deserves.
 
+## A full example
+
+[`examples/spy_walk_forward.ipynb`](https://github.com/haeganm/walkforward/blob/main/examples/spy_walk_forward.ipynb) runs one model end to end on 25 years of daily SPY: lagged features, a ridge on a five-day forward return, 41 purged folds, a GARCH per fold continued with `filter_from`, and 10% vol targeting sized against the previous close. Vol targeting alone lifts the out-of-sample Sharpe from 0.63 to 0.79 and halves the drawdown; the ridge signal has no edge and the notebook says so. The same model with the lags removed reports a Sharpe of 14.6, which is the leak this package exists to make hard.
+
 ## Conventions
 
 Volatility is per period. Annualised converts as `annual / sqrt(periods_per_year)`, so a 10% annual target on daily data is `0.10 / sqrt(252)`, about 0.0063.

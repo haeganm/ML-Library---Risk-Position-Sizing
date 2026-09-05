@@ -167,7 +167,9 @@ class GarchModel:
 
         With the default ``sigma2_first`` the path picks up exactly where the
         fit sample ended, so the result equals the tail of filtering the fit
-        sample and the new data together, bit for bit.
+        sample and the new data together, bit for bit. The seed is a
+        variance; the output is volatility, ``sqrt(sigma2[t])``, like
+        :meth:`filter`.
 
         Parameters
         ----------

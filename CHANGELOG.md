@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `examples/spy_walk_forward.ipynb`: one model end to end on 25 years of
+  daily SPY (checked in as `examples/data/SPY.csv`), with lagged features,
+  a ridge on a five-day forward return, 41 purged walk-forward folds, a
+  GARCH per fold continued with `filter_from`, and 10% volatility
+  targeting. It reports the honest out-of-sample number, then shows what
+  skipping the purge and dropping the lags each do to it. CI executes the
+  notebook from a clean checkout.
+
+### Changed
+
+- `GarchModel.filter_from` docstring says that the seed is a variance and
+  the output is volatility, which the C header already said and the
+  example's first draft got wrong.
+
 ## 3.4.1 (2026-09-05)
 
 No code change. This release exists to publish through trusted publishing

@@ -72,6 +72,30 @@ Without the purge those twenty rows carry labels partly computed from test-windo
 
 There is no `embargo` argument, on purpose. An embargo protects training data that sits after a test window, and a walk-forward never trains on anything after the window it is testing. `walk_forward_splits(..., include_post_train=True)` exposes that variant with the warning it deserves.
 
+## A full walk-forward on SPY
+
+[`examples/spy_walk_forward.ipynb`](examples/spy_walk_forward.ipynb) runs one model end to end on 25 years of daily SPY, checked in as `examples/data/SPY.csv` so it is reproducible offline. Six lagged features, a ridge regression on a five-day forward return, 41 purged walk-forward folds of five years in and half a year out, a GARCH(1,1) fitted per fold and continued onto the test window with `filter_from`, and a position targeting 10% annual volatility, sized against the previous close. Everything below is out of sample, 2006 to 2026.
+
+![Out-of-sample growth of 1 for buy and hold, vol-targeted long only, and the ridge signal, with the GARCH forecast underneath](examples/spy_walk_forward.png)
+
+| Strategy | Sharpe | Annual return | Annual vol | Max drawdown |
+|---|---|---|---|---|
+| Buy and hold | 0.63 | 12.2% | 19.3% | 55% |
+| Vol target, long only | 0.79 | 7.9% | 10.1% | 27% |
+| Vol target, ridge signal | 0.18 | 1.9% | 10.1% | 35% |
+
+The sizing does what it says: realised volatility is 10.1% against a 10% target, and the long-only line beats buy and hold on Sharpe and halves the drawdown with nothing but variance forecasts. The ridge signal has no edge. Its hit rate is 53% and its correlation with the label is 0.04, and going with its sign costs 0.6 of Sharpe. That is the honest number for six textbook features on SPY, and the notebook reports it rather than tuning until it looks better.
+
+Then the same model is run twice more with one line changed each time:
+
+| Change | Sharpe |
+|---|---|
+| None | 0.18 |
+| Tell the splitter labels are one day long, so nothing is purged | 0.27 |
+| Drop every `lag`, so a feature for bar t includes bar t | 14.6 |
+
+Four leaked rows per fold are worth a few hundredths of Sharpe at this horizon; longer labels and shorter test windows leak more. The second change is the one that matters. It produces a Sharpe of 14 from a model with no edge, and nothing in the code that produced it looks wrong. That is what the timing convention and `lag` exist to prevent.
+
 ## How it stays honest
 
 **The forecast at t cannot see t.** `ewma_vol` emits the forecast before it absorbs `returns[t]`; the GARCH filter seeds from the model's stored backcast rather than from the series it is filtering, which is where the 2.x filter leaked. Both are tested for prefix stability (filtering the first half of a series gives the first half of the full filter, exactly) and for shock timing (a spike at bar k moves the output at k+1 and nothing before it). The reference suite goes further: for 40 random series it rewrites everything after a random `t` and asserts every output through `t` is bit-identical.
