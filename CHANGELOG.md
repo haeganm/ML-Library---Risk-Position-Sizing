@@ -4,10 +4,11 @@
 
 First release published to PyPI as `walkforward`. The C library is unchanged
 from 3.3.1; everything here is the Python package and the machinery to ship
-it. Publishing uses a PyPI API token rather than trusted publishing, because
-GitHub issues this repository an OIDC subject claim carrying numeric owner and
-repository identifiers that PyPI does not match; `RELEASING.md` has the
-detail.
+it. The first upload went through an API token after a trusted-publishing
+attempt was refused; the cause was a one-letter mismatch in the publisher's
+workflow name (`release.yaml` for a file called `release.yml`), not the
+platform incompatibility this entry briefly claimed. Trusted publishing is
+the configured path from here on.
 
 ### Added
 

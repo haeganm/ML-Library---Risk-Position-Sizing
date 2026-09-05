@@ -7,41 +7,24 @@ tag disagrees with it.
 
 ## One-time PyPI setup
 
-Publishing uses a PyPI API token held as a repository secret.
+Publishing uses [trusted publishing](https://docs.pypi.org/trusted-publishers/):
+PyPI accepts a short-lived token that GitHub mints for the workflow run, so
+there is no API token in this repository and nothing to rotate or leak.
 
-1. On PyPI, under Account settings, create an API token. Before the project
-   exists the token has to be account-scoped; after the first release, replace
-   it with one scoped to the `walkforward` project alone.
-2. In this repository, under Settings, Secrets and variables, Actions, add it
-   as `PYPI_API_TOKEN`.
+Under the project on PyPI, Settings, Publishing, add a GitHub publisher:
 
-The GitHub environment `pypi` already exists and gates the publish job. Add a
-required reviewer to it if you want a manual approval before anything ships.
+| Field | Value |
+|---|---|
+| Owner | `haeganm` |
+| Repository name | `walkforward` |
+| Workflow name | `release.yml` |
+| Environment name | `pypi` |
 
-### Why not trusted publishing
-
-Trusted publishing would be better: no token, nothing to rotate or leak. It
-does not work for this repository today. GitHub issues it an OIDC subject
-claim of the form
-
-```
-repo:haeganm@220532114/walkforward@1134726644:environment:pypi
-```
-
-with the numeric owner and repository identifiers embedded, while PyPI matches
-publishers against the older
-
-```
-repo:haeganm/walkforward:environment:pypi
-```
-
-Every other claim PyPI checks (`repository`, `repository_owner`,
-`workflow_ref`, `environment`) matches a correctly configured publisher, and
-the exchange is still refused with `invalid-publisher`. Overriding the subject
-template through the repository OIDC customization API is accepted but does
-not change the claim GitHub actually emits. Worth revisiting once PyPI accepts
-the identifier-bearing subject, at which point the token and the `password:`
-line in `release.yml` can both go away.
+The workflow name is the file name in `.github/workflows/`, letter for letter.
+`release.yaml` does not match `release.yml`, and the failure PyPI reports for
+that (`invalid-publisher`) does not say which field is wrong. The GitHub
+environment `pypi` already exists and gates the publish job; add a required
+reviewer to it if you want a manual approval before anything ships.
 
 ## Cutting a release
 
