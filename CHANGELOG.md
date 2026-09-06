@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 3.4.2 (2026-09-05)
+
+Two find-and-fix passes over the Python package, the fitter, the packaging
+and the prose, plus the SPY worked example. The C API is unchanged. The one
+behavioural change in the C is the GARCH fitter, which now reaches the
+maximum of its likelihood on samples where it previously stopped short.
 
 ### Fixed
 
